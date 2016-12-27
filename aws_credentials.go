@@ -46,7 +46,7 @@ var (
 	argKubeMasterURL     = flags.String("kube-master-url", "", `URL to reach kubernetes master. Env variables in this flag will be expanded.`)
 	argDefaultSecretName = flags.String("default-secret-name", "awsecr-creds", `Default secret name`)
 	argDefaultNamespace  = flags.String("default-namespace", "default", `Default namespace`)
-	argAWSRegion         = flags.String("aws-region", "us-east-1", `Default namespace`)
+	argAWSRegion         = flags.String("aws-region", "us-east-1", `Default AWS region`)
 	argRefreshMinutes    = flags.Int("refresh-mins", 715, `Default time to wait before refreshing (11 hours 55 mins)`)
 )
 
