@@ -3,9 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"os"
 	"testing"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/stretchr/testify/assert"
@@ -13,10 +16,17 @@ import (
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	coreType "k8s.io/client-go/kubernetes/typed/core/v1"
+	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
+	v1fake "k8s.io/client-go/kubernetes/typed/core/v1/fake"
 	"k8s.io/client-go/pkg/api"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/watch"
 )
+
+func init() {
+	log.SetOutput(ioutil.Discard)
+	logrus.SetOutput(ioutil.Discard)
+}
 
 type fakeKubeClient struct {
 	secrets         map[string]*fakeSecrets
@@ -34,6 +44,10 @@ type fakeServiceAccounts struct {
 
 type fakeNamespaces struct {
 	store map[string]v1.Namespace
+}
+
+func (f *fakeKubeClient) Core() v1core.CoreV1Interface {
+	return &v1fake.FakeCoreV1{}
 }
 
 func (f *fakeKubeClient) Secrets(namespace string) coreType.SecretInterface {
@@ -291,6 +305,14 @@ func newFakeFailingEcrClient() *fakeFailingEcrClient {
 	return &fakeFailingEcrClient{}
 }
 
+func process(t *testing.T, c *controller) {
+	namespaces, _ := c.k8sutil.Kclient.Namespaces().List(v1.ListOptions{})
+	for _, ns := range namespaces.Items {
+		err := handler(c, &ns)
+		assert.Nil(t, err)
+	}
+}
+
 func TestGetECRAuthorizationKey(t *testing.T) {
 	util := newKubeUtil()
 	ecrClient := newFakeEcrClient()
@@ -312,8 +334,7 @@ func TestProcessOnce(t *testing.T) {
 	gcrClient := newFakeGcrClient()
 	c := &controller{util, ecrClient, gcrClient}
 
-	err := c.process()
-	assert.Nil(t, err)
+	process(t, c)
 
 	// Test GCR
 	secret, err := c.k8sutil.GetSecret("namespace1", *argGCRSecretName)
@@ -380,11 +401,10 @@ func TestProcessTwice(t *testing.T) {
 	*argGCRURL = "fakeEndpoint"
 	gcrClient := newFakeGcrClient()
 	c := &controller{util, ecrClient, gcrClient}
-	err := c.process()
-	assert.Nil(t, err)
+
+	process(t, c)
 	// test processing twice for idempotency
-	err = c.process()
-	assert.Nil(t, err)
+	process(t, c)
 
 	// Test GCR
 	secret, err := c.k8sutil.GetSecret("namespace1", *argGCRSecretName)
@@ -482,8 +502,7 @@ func TestProcessWithExistingSecrets(t *testing.T) {
 	err = c.k8sutil.CreateSecret("namespace2", secretAWS)
 	assert.Nil(t, err)
 
-	err = c.process()
-	assert.Nil(t, err)
+	process(t, c)
 
 	// Test GCR
 	secretGCR, err = c.k8sutil.GetSecret("namespace1", *argGCRSecretName)
@@ -584,7 +603,7 @@ func TestProcessWithExistingImagePullSecrets(t *testing.T) {
 	serviceAccount.ImagePullSecrets = append(serviceAccount.ImagePullSecrets, v1.LocalObjectReference{Name: "someOtherSecret"})
 	err = c.k8sutil.UpdateServiceAccount("namespace2", serviceAccount)
 
-	c.process()
+	process(t, c)
 
 	serviceAccount, err = c.k8sutil.GetServiceAccount("namespace1", "default")
 	assert.Nil(t, err)
@@ -621,8 +640,7 @@ func TestFailingGcrPassingEcrStillSucceeds(t *testing.T) {
 	gcrClient := newFakeFailingGcrClient()
 	c := &controller{util, ecrClient, gcrClient}
 
-	err := c.process()
-	assert.Nil(t, err)
+	process(t, c)
 }
 
 func TestPassingGcrPassingEcrStillSucceeds(t *testing.T) {
@@ -631,6 +649,5 @@ func TestPassingGcrPassingEcrStillSucceeds(t *testing.T) {
 	gcrClient := newFakeGcrClient()
 	c := controller{util, ecrClient, gcrClient}
 
-	err := c.process()
-	assert.Nil(t, err)
+	process(t, &c)
 }

@@ -128,7 +128,7 @@ func (c *controller) getECRAuthorizationKey() (AuthToken, error) {
 	if err != nil {
 		// Print the error, cast err to awserr.Error to get the Code and
 		// Message from an error.
-		fmt.Println(err.Error())
+		logrus.Println(err.Error())
 		return AuthToken{}, err
 	}
 
@@ -186,85 +186,70 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 	return secretGenerators
 }
 
-func (c *controller) process() error {
-	secretGenerators := getSecretGenerators(c)
+func (c *controller) processNamespace(namespace *v1.Namespace, secret *v1.Secret) error {
+	// Check if the secret exists for the namespace
+	_, err := c.k8sutil.GetSecret(namespace.GetName(), secret.Name)
 
-	for _, secretGenerator := range secretGenerators {
-
-		fmt.Printf("------------------ [%s] ----------------------\n", secretGenerator.SecretName)
-
-		newToken, err := secretGenerator.TokenGenFxn()
+	if err != nil {
+		// Secret not found, create
+		err := c.k8sutil.CreateSecret(namespace.GetName(), secret)
 		if err != nil {
-			fmt.Printf("Error getting secret for provider %s. Skipping secret provider! [Err: %s]", secretGenerator.SecretName, err)
-			continue
+			return fmt.Errorf("Could not create Secret! %v", err)
 		}
-		newSecret := generateSecretObj(newToken.AccessToken, newToken.Endpoint, secretGenerator.IsJSONCfg, secretGenerator.SecretName)
-
-		namespaces, err := c.k8sutil.GetNamespaces()
-
+	} else {
+		// Existing secret needs updated
+		err := c.k8sutil.UpdateSecret(namespace.GetName(), secret)
 		if err != nil {
-			fmt.Println("-------> ERROR getting namespaces! Skipping secret provider!", err)
-			continue
+			return fmt.Errorf("Could not update Secret! %v", err)
 		}
+	}
 
-		for _, namespace := range namespaces.Items {
+	// Check if ServiceAccount exists
+	serviceAccount, err := c.k8sutil.GetServiceAccount(namespace.GetName(), "default")
+	if err != nil {
+		fmt.Errorf("Could not get ServiceAccounts! %v", err)
+		return err
+	}
 
-			if *argSkipKubeSystem && namespace.GetName() == "kube-system" {
-				continue
-			}
-
-			// Check if the secret exists for the namespace
-			_, err := c.k8sutil.GetSecret(namespace.GetName(), secretGenerator.SecretName)
-
-			if err != nil {
-				// Secret not found, create
-				err := c.k8sutil.CreateSecret(namespace.GetName(), newSecret)
-				if err != nil {
-					fmt.Println("Could not create Secret!", err)
-					continue
-				}
-			} else {
-				// Existing secret needs updated
-				err := c.k8sutil.UpdateSecret(namespace.GetName(), newSecret)
-				if err != nil {
-					fmt.Println("Could not update Secret!", err)
-					continue
-				}
-			}
-
-			// Check if ServiceAccount exists
-			serviceAccount, err := c.k8sutil.GetServiceAccount(namespace.GetName(), "default")
-
-			if err != nil {
-				fmt.Println("Could not get ServiceAccounts!", err)
-				continue
-			}
-
-			// Update existing one if image pull secrets already exists for aws ecr token
-			imagePullSecretFound := false
-			for i, imagePullSecret := range serviceAccount.ImagePullSecrets {
-				if imagePullSecret.Name == secretGenerator.SecretName {
-					serviceAccount.ImagePullSecrets[i] = v1.LocalObjectReference{Name: secretGenerator.SecretName}
-					imagePullSecretFound = true
-					break
-				}
-			}
-
-			// Append to list of existing service accounts if there isn't one already
-			if !imagePullSecretFound {
-				serviceAccount.ImagePullSecrets = append(serviceAccount.ImagePullSecrets, v1.LocalObjectReference{Name: secretGenerator.SecretName})
-			}
-
-			err = c.k8sutil.UpdateServiceAccount(namespace.GetName(), serviceAccount)
-			if err != nil {
-				fmt.Println("Could not update ServiceAccount!", err)
-				continue
-			}
+	// Update existing one if image pull secrets already exists for aws ecr token
+	imagePullSecretFound := false
+	for i, imagePullSecret := range serviceAccount.ImagePullSecrets {
+		if imagePullSecret.Name == secret.Name {
+			serviceAccount.ImagePullSecrets[i] = v1.LocalObjectReference{Name: secret.Name}
+			imagePullSecretFound = true
+			break
 		}
-		fmt.Println("Finished processing secret for: ", secretGenerator.SecretName)
+	}
+
+	// Append to list of existing service accounts if there isn't one already
+	if !imagePullSecretFound {
+		serviceAccount.ImagePullSecrets = append(serviceAccount.ImagePullSecrets, v1.LocalObjectReference{Name: secret.Name})
+	}
+
+	err = c.k8sutil.UpdateServiceAccount(namespace.GetName(), serviceAccount)
+	if err != nil {
+		return fmt.Errorf("Could not update ServiceAccount! %v", err)
 	}
 
 	return nil
+}
+
+func (c *controller) generateSecrets() []*v1.Secret {
+	var secrets []*v1.Secret
+	secretGenerators := getSecretGenerators(c)
+
+	for _, secretGenerator := range secretGenerators {
+		logrus.Printf("------------------ [%s] ----------------------\n", secretGenerator.SecretName)
+
+		newToken, err := secretGenerator.TokenGenFxn()
+		if err != nil {
+			logrus.Printf("Error getting secret for provider %s. Skipping secret provider! [Err: %s]", secretGenerator.SecretName, err)
+			continue
+		}
+		newSecret := generateSecretObj(newToken.AccessToken, newToken.Endpoint, secretGenerator.IsJSONCfg, secretGenerator.SecretName)
+		secrets = append(secrets, newSecret)
+	}
+	return secrets
 }
 
 func validateParams() {
@@ -279,6 +264,23 @@ func validateParams() {
 	if len(awsAccountIDEnv) > 0 {
 		awsAccountID = awsAccountIDEnv
 	}
+}
+
+func handler(c *controller, ns *v1.Namespace) error {
+	log.Print("Refreshing credentials...")
+	secrets := c.generateSecrets()
+	for _, secret := range secrets {
+		if *argSkipKubeSystem && ns.GetName() == "kube-system" {
+			continue
+		}
+
+		if err := c.processNamespace(ns, secret); err != nil {
+			return err
+		}
+
+		log.Printf("Finished processing secret for namespace %s, secret %s", ns.Name, secret.Name)
+	}
+	return nil
 }
 
 func main() {
@@ -301,18 +303,7 @@ func main() {
 	gcrClient := newGcrClient()
 	c := &controller{util, ecrClient, gcrClient}
 
-	tick := time.Tick(time.Duration(*argRefreshMinutes) * time.Minute)
-
-	// Process once now, then wait for tick
-	c.process()
-
-	for {
-		select {
-		case <-tick:
-			log.Print("Refreshing credentials...")
-			if err := c.process(); err != nil {
-				log.Fatalf("Failed to load ecr credentials: %v", err)
-			}
-		}
-	}
+	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *v1.Namespace) error {
+		return handler(c, ns)
+	})
 }
