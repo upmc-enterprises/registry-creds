@@ -207,8 +207,7 @@ func (c *controller) processNamespace(namespace *v1.Namespace, secret *v1.Secret
 	// Check if ServiceAccount exists
 	serviceAccount, err := c.k8sutil.GetServiceAccount(namespace.GetName(), "default")
 	if err != nil {
-		fmt.Errorf("Could not get ServiceAccounts! %v", err)
-		return err
+		return fmt.Errorf("Could not get ServiceAccounts! %v", err)
 	}
 
 	// Update existing one if image pull secrets already exists for aws ecr token
