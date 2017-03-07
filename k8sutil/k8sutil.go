@@ -7,7 +7,6 @@ import (
 	"github.com/Sirupsen/logrus"
 	"k8s.io/client-go/kubernetes"
 	coreType "k8s.io/client-go/kubernetes/typed/core/v1"
-	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/fields"
 	"k8s.io/client-go/rest"
@@ -20,7 +19,7 @@ type KubeInterface interface {
 	Secrets(namespace string) coreType.SecretInterface
 	Namespaces() coreType.NamespaceInterface
 	ServiceAccounts(namespace string) coreType.ServiceAccountInterface
-	Core() v1core.CoreV1Interface
+	Core() coreType.CoreV1Interface
 }
 
 type K8sutilInterface struct {

@@ -16,7 +16,6 @@ import (
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	coreType "k8s.io/client-go/kubernetes/typed/core/v1"
-	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	v1fake "k8s.io/client-go/kubernetes/typed/core/v1/fake"
 	"k8s.io/client-go/pkg/api"
 	"k8s.io/client-go/pkg/api/v1"
@@ -46,7 +45,7 @@ type fakeNamespaces struct {
 	store map[string]v1.Namespace
 }
 
-func (f *fakeKubeClient) Core() v1core.CoreV1Interface {
+func (f *fakeKubeClient) Core() coreType.CoreV1Interface {
 	return &v1fake.FakeCoreV1{}
 }
 
