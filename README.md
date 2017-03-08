@@ -88,6 +88,28 @@ The value for `application_default_credentials.json` can be obtained with the fo
    ```bash
    kubectl create -f k8s/replicationController.yaml
    ```
+   
+## How to setup running in Docker Private Registry
+
+1. Clone the repo and navigate to directory
+
+2. Edit the sample [secret](k8s/secret.yaml) and update values for `DOCKER_PRIVATE_REGISTRY_SERVER`, `DOCKER_PRIVATE_REGISTRY_USER`, and `DOCKER_PRIVATE_REGISTRY_PASSWORD` (base64 encoded).
+
+   ```bash
+   echo -n "secret-key" | base64
+   ```
+
+3. Create the secret in kubernetes
+
+   ```bash
+   kubectl create -f k8s/secret.yml
+   ```
+
+4. Create the replication controller:
+
+   ```bash
+   kubectl create -f k8s/replicationController.yaml
+   ```
 
 ## DockerHub Image
 
