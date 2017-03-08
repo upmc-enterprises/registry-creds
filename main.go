@@ -25,8 +25,10 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
+	"strings"
 	"os"
 	"time"
 
@@ -43,21 +45,30 @@ import (
 )
 
 const (
+	dockerPrivateRegistryPasswordKey = "DOCKER_PRIVATE_REGISTRY_PASSWORD"
+	dockerPrivateRegistryServerKey   = "DOCKER_PRIVATE_REGISTRY_SERVER"
+	dockerPrivateRegistryUserKey     = "DOCKER_PRIVATE_REGISTRY_USER"
+)
+
+const (
 	dockerCfgTemplate  = `{"%s":{"username":"oauth2accesstoken","password":"%s","email":"none"}}`
 	dockerJSONTemplate = `{"auths":{"%s":{"auth":"%s","email":"none"}}}`
 )
 
 var (
-	flags               = flag.NewFlagSet("", flag.ContinueOnError)
-	argKubecfgFile      = flags.String("kubecfg-file", "", `Location of kubecfg file for access to kubernetes master service; --kube_master_url overrides the URL part of this; if neither this nor --kube_master_url are provided, defaults to service account tokens`)
-	argKubeMasterURL    = flags.String("kube-master-url", "", `URL to reach kubernetes master. Env variables in this flag will be expanded.`)
-	argAWSSecretName    = flags.String("aws-secret-name", "awsecr-cred", `Default aws secret name`)
-	argGCRSecretName    = flags.String("gcr-secret-name", "gcr-secret", `Default gcr secret name`)
-	argDefaultNamespace = flags.String("default-namespace", "default", `Default namespace`)
-	argGCRURL           = flags.String("gcr-url", "https://gcr.io", `Default GCR URL`)
-	argAWSRegion        = flags.String("aws-region", "us-east-1", `Default AWS region`)
-	argRefreshMinutes   = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
-	argSkipKubeSystem   = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
+	flags             = flag.NewFlagSet("", flag.ContinueOnError)
+	argKubecfgFile    = flags.String("kubecfg-file", "", `Location of kubecfg file for access to kubernetes master service; --kube_master_url overrides the URL part of this; if neither this nor --kube_master_url are provided, defaults to service account tokens`)
+	argKubeMasterURL  = flags.String("kube-master-url", "", `URL to reach kubernetes master. Env variables in this flag will be expanded.`)
+	argAWSSecretName  = flags.String("aws-secret-name", "awsecr-cred", `Default AWS secret name`)
+	argDPRSecretName  = flags.String("dpr-secret-name", "dpr-secret", `Default Docker Private Registry secret name`)
+	argGCRSecretName  = flags.String("gcr-secret-name", "gcr-secret", `Default GCR secret name`)
+	argGCRURL         = flags.String("gcr-url", "https://gcr.io", `Default GCR URL`)
+	argAWSRegion      = flags.String("aws-region", "us-east-1", `Default AWS region`)
+	argDPRPassword    = flags.String("dpr-password", "", "Docker Private Registry password")
+	argDPRServer      = flags.String("dpr-server", "", "Docker Private Registry server")
+	argDPRUser        = flags.String("dpr-user", "", "Docker Private Registry user")
+	argRefreshMinutes = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
+	argSkipKubeSystem = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
 )
 
 var (
@@ -68,6 +79,12 @@ type controller struct {
 	k8sutil   *k8sutil.K8sutilInterface
 	ecrClient ecrInterface
 	gcrClient gcrInterface
+	dprClient dprInterface
+}
+
+// Docker Private Registry interface
+type dprInterface interface {
+	getAuthToken(server, user, password string) (AuthToken, error)
 }
 
 type ecrInterface interface {
@@ -82,6 +99,30 @@ func newEcrClient() ecrInterface {
 	return ecr.New(session.New(), aws.NewConfig().WithRegion(*argAWSRegion))
 }
 
+type dprClient struct{}
+
+func (dpr dprClient) getAuthToken(server, user, password string) (AuthToken, error) {
+	if server == "" {
+		return 	AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryServerKey))
+	}
+
+	if user == "" {
+		return 	AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryUserKey))
+	}
+
+	if password == "" {
+		return 	AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryPasswordKey))
+	}
+
+	token := base64.StdEncoding.EncodeToString([]byte(strings.Join([]string{user, password}, ":")))
+
+	return AuthToken{AccessToken: token, Endpoint: server}, nil
+}
+
+func newDprClient() dprInterface {
+	return dprClient{}
+}
+
 type gcrClient struct{}
 
 func (gcr gcrClient) DefaultTokenSource(ctx context.Context, scope ...string) (oauth2.TokenSource, error) {
@@ -90,6 +131,10 @@ func (gcr gcrClient) DefaultTokenSource(ctx context.Context, scope ...string) (o
 
 func newGcrClient() gcrInterface {
 	return gcrClient{}
+}
+
+func (c *controller) getDPRToken() (AuthToken, error) {
+	return c.dprClient.getAuthToken(*argDPRServer, *argDPRUser, *argDPRPassword)
 }
 
 func (c *controller) getGCRAuthorizationKey() (AuthToken, error) {
@@ -170,6 +215,12 @@ type SecretGenerator struct {
 
 func getSecretGenerators(c *controller) []SecretGenerator {
 	secretGenerators := []SecretGenerator{}
+
+	secretGenerators = append(secretGenerators, SecretGenerator{
+		TokenGenFxn: c.getDPRToken,
+		IsJSONCfg:   true,
+		SecretName:  *argDPRSecretName,
+	})
 
 	secretGenerators = append(secretGenerators, SecretGenerator{
 		TokenGenFxn: c.getGCRAuthorizationKey,
@@ -255,6 +306,9 @@ func validateParams() {
 	// Allow environment variables to overwrite args
 	awsAccountIDEnv := os.Getenv("awsaccount")
 	awsRegionEnv := os.Getenv("awsregion")
+	dprPassword := os.Getenv(dockerPrivateRegistryPasswordKey)
+	dprServer := os.Getenv(dockerPrivateRegistryServerKey)
+	dprUser := os.Getenv(dockerPrivateRegistryUserKey)
 
 	if len(awsRegionEnv) > 0 {
 		argAWSRegion = &awsRegionEnv
@@ -262,6 +316,18 @@ func validateParams() {
 
 	if len(awsAccountIDEnv) > 0 {
 		awsAccountID = awsAccountIDEnv
+	}
+
+	if len(dprPassword) > 0 {
+		argDPRPassword = &dprPassword
+	}
+
+	if len(dprServer) > 0 {
+		argDPRServer = &dprServer
+	}
+
+	if len(dprUser) > 0 {
+		argDPRUser = &dprUser
 	}
 }
 
@@ -289,7 +355,7 @@ func main() {
 	validateParams()
 
 	log.Print("Using AWS Account: ", awsAccountID)
-	log.Printf("Using AWS Region: %s", *argAWSRegion)
+	log.Print("Using AWS Region: ", *argAWSRegion)
 	log.Print("Refresh Interval (minutes): ", *argRefreshMinutes)
 
 	util, err := k8sutil.New(*argKubecfgFile, *argKubeMasterURL)
@@ -300,7 +366,8 @@ func main() {
 
 	ecrClient := newEcrClient()
 	gcrClient := newGcrClient()
-	c := &controller{util, ecrClient, gcrClient}
+	dprClient := newDprClient()
+	c := &controller{util, ecrClient, gcrClient, dprClient}
 
 	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *v1.Namespace) error {
 		return handler(c, ns)
