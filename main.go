@@ -217,12 +217,6 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 	secretGenerators := []SecretGenerator{}
 
 	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getDPRToken,
-		IsJSONCfg:   true,
-		SecretName:  *argDPRSecretName,
-	})
-
-	secretGenerators = append(secretGenerators, SecretGenerator{
 		TokenGenFxn: c.getGCRAuthorizationKey,
 		IsJSONCfg:   false,
 		SecretName:  *argGCRSecretName,
@@ -232,6 +226,12 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 		TokenGenFxn: c.getECRAuthorizationKey,
 		IsJSONCfg:   true,
 		SecretName:  *argAWSSecretName,
+	})
+
+	secretGenerators = append(secretGenerators, SecretGenerator{
+		TokenGenFxn: c.getDPRToken,
+		IsJSONCfg:   true,
+		SecretName:  *argDPRSecretName,
 	})
 
 	return secretGenerators
