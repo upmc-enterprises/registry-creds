@@ -79,6 +79,7 @@ kubectl create -f k8s/secret.yml
 ```bash
 kubectl create -f k8s/replicationController.yaml
 ```
+4. Use gcr-secret for name of imagePullSecrets on your deployment.yaml file.
 
 ## DockerHub Image
 
