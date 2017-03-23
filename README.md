@@ -122,7 +122,7 @@ If you want to hack on this project:
 1. Clone the repo
 2. Build: `make build`
 3. Test: `make test`
-4. Run on your machine: `./bin/registry-creds --kubecfg-file=<pathToKubecfgFile>` or `go run ./main.go --kubecfg-file=<pathToKubecfgFile>`
+4. Run on your machine: `go run ./main.go --kubecfg-file=<pathToKubecfgFile>`
 
 ## About
 

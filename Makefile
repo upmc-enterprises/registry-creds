@@ -6,12 +6,6 @@ TAG = 1.6
 PREFIX = upmcenterprises
 
 BIN = registry-creds
-ARCH = amd64
-
-# go option
-GO      ?= go
-LDFLAGS := -w
-GOFLAGS := -a -installsuffix cgo
 
 # docker build arguments for internal proxy
 ifneq ($(http_proxy),)
@@ -30,23 +24,8 @@ endif
 all: container
 
 .PHONY: build
-build: build-dirs bin/$(BIN) bin/linux_$(ARCH)/$(BIN)
-
-# local developement binary (auto detect developer OS)
-bin/$(BIN): main.go
-	@echo "Building: $@"
-	GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) install
-	GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) build $(GOFLAGS) -o $@ --ldflags '$(LDFLAGS)' $<
-
-# docker image binary
-bin/linux_$(ARCH)/$(BIN): main.go
-	@echo "Building: $@"
-	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) install
-	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) build $(GOFLAGS) -o $@ --ldflags '$(LDFLAGS)' $<
-
-.PHONY: build-dirs
-build-dirs:
-	@mkdir -p bin/linux_$(ARCH)
+build: main.go
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -a -installsuffix cgo -o $(BIN) --ldflags '-w' $<
 
 .PHONY: container
 container: build
@@ -60,8 +39,8 @@ push:
 
 .PHONY: clean
 clean:
-	rm -rf bin
+	rm -f $(BIN)
 
 .PHONY: test
 test: clean
-	$(GO) test -v $(go list ./... | grep -v vendor)
+	go test -v $(go list ./... | grep -v vendor)
