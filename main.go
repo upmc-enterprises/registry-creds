@@ -29,11 +29,15 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	flag "github.com/spf13/pflag"
@@ -42,7 +46,6 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"k8s.io/client-go/pkg/api/v1"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 )
 
 const (
@@ -67,7 +70,7 @@ var (
 	argDPRUser        = flags.String("dpr-user", "", "Docker Private Registry user")
 	argRefreshMinutes = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
 	argSkipKubeSystem = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
-	argAWSAssumeRole  = flags.String( "aws_assume_role", "",  `If specified AWS will assume this role and use it to retrieve tokens`)
+	argAWSAssumeRole  = flags.String("aws_assume_role", "", `If specified AWS will assume this role and use it to retrieve tokens`)
 )
 
 var (
@@ -309,11 +312,47 @@ func (c *controller) generateSecrets() []*v1.Secret {
 	return secrets
 }
 
+func userHomeDir() string {
+	if runtime.GOOS == "windows" {
+		home := os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
+		if home == "" {
+			home = os.Getenv("USERPROFILE")
+		}
+		return home
+	}
+	return os.Getenv("HOME")
+}
+
+func getDefaultAWSCredentials() (string, string) {
+	awsAccountID, awsRegion := "", ""
+
+	homeDir := userHomeDir()
+	credPath := filepath.Join(homeDir, ".aws/credentials")
+
+	if _, err := os.Stat(credPath); !os.IsNotExist(err) {
+		output, err := exec.Command("aws", "sts", "get-caller-identity", "--output", "text", "--query", "Account").Output()
+		if err != nil {
+			logrus.Error("Get AWS accountID from default credential file error!", err)
+		} else {
+			awsAccountID = strings.TrimRight(string(output), "\n")
+		}
+
+		output, err = exec.Command("aws", "configure", "get", "region").Output()
+		if err != nil {
+			logrus.Error("Get AWS region from default credential file error!", err)
+		} else {
+			awsRegion = strings.TrimRight(string(output), "\n")
+		}
+	}
+
+	return awsAccountID, awsRegion
+}
+
 func validateParams() {
 	// Allow environment variables to overwrite args
 	awsAccountIDEnv := os.Getenv("awsaccount")
 	awsRegionEnv := os.Getenv("awsregion")
-	argAWSAssumeRoleEnv := os.Getenv( "aws_assume_role")
+	argAWSAssumeRoleEnv := os.Getenv("aws_assume_role")
 	dprPassword := os.Getenv(dockerPrivateRegistryPasswordKey)
 	dprServer := os.Getenv(dockerPrivateRegistryServerKey)
 	dprUser := os.Getenv(dockerPrivateRegistryUserKey)
@@ -368,6 +407,8 @@ func handler(c *controller, ns *v1.Namespace) error {
 func main() {
 	log.Print("Starting up...")
 	flags.Parse(os.Args)
+
+	awsAccountID, *argAWSRegion = getDefaultAWSCredentials()
 
 	validateParams()
 
