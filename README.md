@@ -112,6 +112,50 @@ The value for `application_default_credentials.json` can be obtained with the fo
    kubectl create -f k8s/replicationController.yaml
    ```
 
+## How to setup on minikube
+
+1. Start minikube
+
+  ```bash
+  minikube start
+  ```
+  
+2. Configure the minikube registry-creds addon
+
+  ```bash
+  minikube addons configure registry-creds 
+  ```
+
+3. Now enable the addon
+
+  ```bash
+  minikube addons enable registry-creds
+  ```
+  
+### Automating this in your deployment AWS ECR Example
+
+For a local development environment you maybe want to automate this steps.
+Configure and enable this addon and get the secret.yaml and replicationController.yaml.
+
+1. Get the secret
+
+  ```bash
+  kubectl get secret registry-creds-ecr -n kube-system -o yaml --export > secret.yaml
+  ```
+
+2. Get the Replication Controller
+
+  ```bash
+  kubectl get rc registry-creds -o yaml -n kube-system --export > replicationController.yaml
+  ```
+
+3. Provide the imagePullSecret for your deployments
+  
+  ```yaml
+  imagePullSecrets:
+      - name: awsecr-cred
+  ```
+
 ## DockerHub Image
 
 - [upmcenterprises/registry-creds](https://hub.docker.com/r/upmcenterprises/registry-creds/)
