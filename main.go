@@ -30,6 +30,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -347,6 +350,42 @@ func (c *controller) generateSecrets() []*v1.Secret {
 	return secrets
 }
 
+func userHomeDir() string {
+	if runtime.GOOS == "windows" {
+		home := os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
+		if home == "" {
+			home = os.Getenv("USERPROFILE")
+		}
+		return home
+	}
+	return os.Getenv("HOME")
+}
+
+func getDefaultAWSCredentials() (string, string) {
+	awsAccountID, awsRegion := "", ""
+
+	homeDir := userHomeDir()
+	credPath := filepath.Join(homeDir, ".aws/credentials")
+
+	if _, err := os.Stat(credPath); !os.IsNotExist(err) {
+		output, err := exec.Command("aws", "sts", "get-caller-identity", "--output", "text", "--query", "Account").Output()
+		if err != nil {
+			logrus.Error("Get AWS accountID from default credential file error!", err)
+		} else {
+			awsAccountID = strings.TrimRight(string(output), "\n")
+		}
+
+		output, err = exec.Command("aws", "configure", "get", "region").Output()
+		if err != nil {
+			logrus.Error("Get AWS region from default credential file error!", err)
+		} else {
+			awsRegion = strings.TrimRight(string(output), "\n")
+		}
+	}
+
+	return awsAccountID, awsRegion
+}
+
 func validateParams() {
 	// Allow environment variables to overwrite args
 	awsAccountIDEnv := os.Getenv("awsaccount")
@@ -408,6 +447,8 @@ func handler(c *controller, ns *v1.Namespace) error {
 func main() {
 	log.Print("Starting up...")
 	flags.Parse(os.Args)
+
+	awsAccountID, *argAWSRegion = getDefaultAWSCredentials()
 
 	validateParams()
 
