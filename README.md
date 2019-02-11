@@ -20,7 +20,7 @@ The following parameters are driven via Environment variables.
 
 - Environment Variables:
   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: Credentials to access AWS.
-  - awsaccount: AWS Account Id.
+  - awsaccount: Comma separated list of AWS Account Ids.
   - awsregion: (optional) Can override the default AWS region by setting this variable.
   - aws-assume-role (optional) can provide a role ARN that will be assumed for getting ECR authorization tokens
     > **Note:** The region can also be specified as an arg to the binary.

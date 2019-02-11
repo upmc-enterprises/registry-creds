@@ -1,8 +1,8 @@
 # Makefile for the Docker image upmcenterprises/registry-creds
-# MAINTAINER: Steve Sloka <slokas@upmc.edu>
+# MAINTAINER: Steve Sloka <steve@stevesloka.com>
 # If you update this image please bump the tag value before pushing.
 
-TAG = 1.8
+TAG = 1.9
 PREFIX = upmcenterprises
 
 BIN = registry-creds

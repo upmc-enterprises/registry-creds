@@ -9,15 +9,15 @@ spec:
   replicas: 1
   selector:
     name: registry-creds
-    version: v1.6
+    version: v1.9
   template:
     metadata:
       labels:
         name: registry-creds
-        version: v1.6
+        version: v1.9
     spec:
       containers:
-      - image: upmcenterprises/registry-creds:1.6
+      - image: upmcenterprises/registry-creds:1.9
         name: registry-creds
         imagePullPolicy: Always
         env:
@@ -45,7 +45,7 @@ spec:
             valueFrom:
               secretKeyRef:
                 name: registry-creds-ecr
-                key: aws_assume_role
+                key: aws-assume-role
           - name: DOCKER_PRIVATE_REGISTRY_PASSWORD
             valueFrom:
               secretKeyRef:
