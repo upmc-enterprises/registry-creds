@@ -26,14 +26,21 @@ import (
 	"github.com/mailru/easyjson/jwriter"
 )
 
+// nullJSON represents a JSON object with null type
+var nullJSON = []byte("null")
+
 // DefaultJSONNameProvider the default cache for types
 var DefaultJSONNameProvider = NewNameProvider()
 
 const comma = byte(',')
 
-var closers = map[byte]byte{
-	'{': '}',
-	'[': ']',
+var closers map[byte]byte
+
+func init() {
+	closers = map[byte]byte{
+		'{': '}',
+		'[': ']',
+	}
 }
 
 type ejMarshaler interface {
@@ -61,15 +68,16 @@ func WriteJSON(data interface{}) ([]byte, error) {
 // ReadJSON reads json data, prefers finding an appropriate interface to short-circuit the unmarshaller
 // so it takes the fastes option available
 func ReadJSON(data []byte, value interface{}) error {
+	trimmedData := bytes.Trim(data, "\x00")
 	if d, ok := value.(ejUnmarshaler); ok {
-		jl := &jlexer.Lexer{Data: data}
+		jl := &jlexer.Lexer{Data: trimmedData}
 		d.UnmarshalEasyJSON(jl)
 		return jl.Error()
 	}
 	if d, ok := value.(json.Unmarshaler); ok {
-		return d.UnmarshalJSON(data)
+		return d.UnmarshalJSON(trimmedData)
 	}
-	return json.Unmarshal(data, value)
+	return json.Unmarshal(trimmedData, value)
 }
 
 // DynamicJSONToStruct converts an untyped json structure into a struct
@@ -79,10 +87,7 @@ func DynamicJSONToStruct(data interface{}, target interface{}) error {
 	if err != nil {
 		return err
 	}
-	if err := ReadJSON(b, target); err != nil {
-		return err
-	}
-	return nil
+	return ReadJSON(b, target)
 }
 
 // ConcatJSON concatenates multiple json objects efficiently
@@ -90,17 +95,29 @@ func ConcatJSON(blobs ...[]byte) []byte {
 	if len(blobs) == 0 {
 		return nil
 	}
-	if len(blobs) == 1 {
+
+	last := len(blobs) - 1
+	for blobs[last] == nil || bytes.Equal(blobs[last], nullJSON) {
+		// strips trailing null objects
+		last--
+		if last < 0 {
+			// there was nothing but "null"s or nil...
+			return nil
+		}
+	}
+	if last == 0 {
 		return blobs[0]
 	}
 
-	last := len(blobs) - 1
 	var opening, closing byte
-	a := 0
-	idx := 0
+	var idx, a int
 	buf := bytes.NewBuffer(nil)
 
-	for i, b := range blobs {
+	for i, b := range blobs[:last+1] {
+		if b == nil || bytes.Equal(b, nullJSON) {
+			// a null object is in the list: skip it
+			continue
+		}
 		if len(b) > 0 && opening == 0 { // is this an array or an object?
 			opening, closing = b[0], closers[b[0]]
 		}
@@ -237,13 +254,15 @@ func newNameIndex(tpe reflect.Type) nameIndex {
 
 // GetJSONNames gets all the json property names for a type
 func (n *NameProvider) GetJSONNames(subject interface{}) []string {
+	n.lock.Lock()
+	defer n.lock.Unlock()
 	tpe := reflect.Indirect(reflect.ValueOf(subject)).Type()
 	names, ok := n.index[tpe]
 	if !ok {
 		names = n.makeNameIndex(tpe)
 	}
 
-	var res []string
+	res := make([]string, 0, len(names.jsonNames))
 	for k := range names.jsonNames {
 		res = append(res, k)
 	}
@@ -258,6 +277,8 @@ func (n *NameProvider) GetJSONName(subject interface{}, name string) (string, bo
 
 // GetJSONNameForType gets the json name for a go property name on a given type
 func (n *NameProvider) GetJSONNameForType(tpe reflect.Type, name string) (string, bool) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
 	names, ok := n.index[tpe]
 	if !ok {
 		names = n.makeNameIndex(tpe)
@@ -267,8 +288,6 @@ func (n *NameProvider) GetJSONNameForType(tpe reflect.Type, name string) (string
 }
 
 func (n *NameProvider) makeNameIndex(tpe reflect.Type) nameIndex {
-	n.lock.Lock()
-	defer n.lock.Unlock()
 	names := newNameIndex(tpe)
 	n.index[tpe] = names
 	return names
@@ -282,6 +301,8 @@ func (n *NameProvider) GetGoName(subject interface{}, name string) (string, bool
 
 // GetGoNameForType gets the go name for a given type for a json property name
 func (n *NameProvider) GetGoNameForType(tpe reflect.Type, name string) (string, bool) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
 	names, ok := n.index[tpe]
 	if !ok {
 		names = n.makeNameIndex(tpe)

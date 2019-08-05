@@ -6,15 +6,14 @@ package jlexer
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"strconv"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
-	"unsafe"
 )
 
 // tokenKind determines type of a token.
@@ -50,8 +49,8 @@ type Lexer struct {
 	wantSep      byte // A comma or a colon character, which need to occur before a token.
 
 	UseMultipleErrors bool          // If we want to use multiple errors.
-	fatalError        error         // Fatal error occured during lexing. It is usually a syntax error.
-	multipleErrors    []*LexerError // Semantic errors occured during lexing. Marshalling will be continued after finding this errors.
+	fatalError        error         // Fatal error occurred during lexing. It is usually a syntax error.
+	multipleErrors    []*LexerError // Semantic errors occurred during lexing. Marshalling will be continued after finding this errors.
 }
 
 // FetchToken scans the input for the next token.
@@ -205,17 +204,6 @@ func (r *Lexer) fetchFalse() {
 	}
 }
 
-// bytesToStr creates a string pointing at the slice to avoid copying.
-//
-// Warning: the string returned by the function should be used with care, as the whole input data
-// chunk may be either blocked from being freed by GC because of a single string or the buffer.Data
-// may be garbage-collected even when the string exists.
-func bytesToStr(data []byte) string {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&data))
-	shdr := reflect.StringHeader{h.Data, h.Len}
-	return *(*string)(unsafe.Pointer(&shdr))
-}
-
 // fetchNumber scans a number literal token.
 func (r *Lexer) fetchNumber() {
 	hasE := false
@@ -252,7 +240,7 @@ func (r *Lexer) fetchNumber() {
 
 // findStringLen tries to scan into the string literal for ending quote char to determine required size.
 // The size will be exact if no escapes are present and may be inexact if there are escaped chars.
-func findStringLen(data []byte) (hasEscapes bool, length int) {
+func findStringLen(data []byte) (isValid, hasEscapes bool, length int) {
 	delta := 0
 
 	for i := 0; i < len(data); i++ {
@@ -264,11 +252,11 @@ func findStringLen(data []byte) (hasEscapes bool, length int) {
 				delta++
 			}
 		case '"':
-			return (delta > 0), (i - delta)
+			return true, (delta > 0), (i - delta)
 		}
 	}
 
-	return false, len(data)
+	return false, false, len(data)
 }
 
 // getu4 decodes \uXXXX from the beginning of s, returning the hex value,
@@ -354,7 +342,12 @@ func (r *Lexer) fetchString() {
 	r.pos++
 	data := r.Data[r.pos:]
 
-	hasEscapes, length := findStringLen(data)
+	isValid, hasEscapes, length := findStringLen(data)
+	if !isValid {
+		r.pos += length
+		r.errParse("unterminated string literal")
+		return
+	}
 	if !hasEscapes {
 		r.token.byteValue = data[:length]
 		r.pos += length + 1
@@ -528,11 +521,12 @@ func (r *Lexer) SkipRecursive() {
 	r.scanToken()
 	var start, end byte
 
-	if r.token.delimValue == '{' {
+	switch r.token.delimValue {
+	case '{':
 		start, end = '{', '}'
-	} else if r.token.delimValue == '[' {
+	case '[':
 		start, end = '[', ']'
-	} else {
+	default:
 		r.consume()
 		return
 	}
@@ -595,11 +589,11 @@ func (r *Lexer) Consumed() {
 
 	for _, c := range r.Data[r.pos:] {
 		if c != ' ' && c != '\t' && c != '\r' && c != '\n' {
-			r.fatalError = &LexerError{
+			r.AddError(&LexerError{
 				Reason: "invalid character '" + string(c) + "' after top-level value",
 				Offset: r.pos,
 				Data:   string(r.Data[r.pos:]),
-			}
+			})
 			return
 		}
 
@@ -631,6 +625,12 @@ func (r *Lexer) UnsafeString() string {
 	return ret
 }
 
+// UnsafeBytes returns the byte slice if the token is a string literal.
+func (r *Lexer) UnsafeBytes() []byte {
+	_, ret := r.unsafeString()
+	return ret
+}
+
 // String reads a string literal.
 func (r *Lexer) String() string {
 	if r.token.kind == tokenUndef && r.Ok() {
@@ -655,7 +655,7 @@ func (r *Lexer) Bytes() []byte {
 		return nil
 	}
 	ret := make([]byte, base64.StdEncoding.DecodedLen(len(r.token.byteValue)))
-	len, err := base64.StdEncoding.Decode(ret, r.token.byteValue)
+	n, err := base64.StdEncoding.Decode(ret, r.token.byteValue)
 	if err != nil {
 		r.fatalError = &LexerError{
 			Reason: err.Error(),
@@ -664,7 +664,7 @@ func (r *Lexer) Bytes() []byte {
 	}
 
 	r.consume()
-	return ret[:len]
+	return ret[:n]
 }
 
 // Bool reads a true or false boolean keyword.
@@ -910,6 +910,10 @@ func (r *Lexer) UintStr() uint {
 	return uint(r.Uint64Str())
 }
 
+func (r *Lexer) UintptrStr() uintptr {
+	return uintptr(r.Uint64Str())
+}
+
 func (r *Lexer) Int8Str() int8 {
 	s, b := r.unsafeString()
 	if !r.Ok() {
@@ -999,6 +1003,22 @@ func (r *Lexer) Float32() float32 {
 	return float32(n)
 }
 
+func (r *Lexer) Float32Str() float32 {
+	s, b := r.unsafeString()
+	if !r.Ok() {
+		return 0
+	}
+	n, err := strconv.ParseFloat(s, 32)
+	if err != nil {
+		r.addNonfatalError(&LexerError{
+			Offset: r.start,
+			Reason: err.Error(),
+			Data:   string(b),
+		})
+	}
+	return float32(n)
+}
+
 func (r *Lexer) Float64() float64 {
 	s := r.number()
 	if !r.Ok() {
@@ -1011,6 +1031,22 @@ func (r *Lexer) Float64() float64 {
 			Offset: r.start,
 			Reason: err.Error(),
 			Data:   s,
+		})
+	}
+	return n
+}
+
+func (r *Lexer) Float64Str() float64 {
+	s, b := r.unsafeString()
+	if !r.Ok() {
+		return 0
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		r.addNonfatalError(&LexerError{
+			Offset: r.start,
+			Reason: err.Error(),
+			Data:   string(b),
 		})
 	}
 	return n
@@ -1048,6 +1084,31 @@ func (r *Lexer) addNonfatalError(err *LexerError) {
 
 func (r *Lexer) GetNonFatalErrors() []*LexerError {
 	return r.multipleErrors
+}
+
+// JsonNumber fetches and json.Number from 'encoding/json' package.
+// Both int, float or string, contains them are valid values
+func (r *Lexer) JsonNumber() json.Number {
+	if r.token.kind == tokenUndef && r.Ok() {
+		r.FetchToken()
+	}
+	if !r.Ok() {
+		r.errInvalidToken("json.Number")
+		return json.Number("")
+	}
+
+	switch r.token.kind {
+	case tokenString:
+		return json.Number(r.String())
+	case tokenNumber:
+		return json.Number(r.Raw())
+	case tokenNull:
+		r.Null()
+		return json.Number("")
+	default:
+		r.errSyntax()
+		return json.Number("")
+	}
 }
 
 // Interface fetches an interface{} analogous to the 'encoding/json' package.
@@ -1091,7 +1152,7 @@ func (r *Lexer) Interface() interface{} {
 	} else if r.token.delimValue == '[' {
 		r.consume()
 
-		var ret []interface{}
+		ret := []interface{}{}
 		for !r.IsDelim(']') {
 			ret = append(ret, r.Interface())
 			r.WantComma()
