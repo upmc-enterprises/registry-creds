@@ -1,20 +1,17 @@
-apiVersion: v1
-kind: ReplicationController
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: registry-creds
   namespace: kube-system
-  labels:
-    version: v1.6
 spec:
   replicas: 1
   selector:
-    name: registry-creds
-    version: v1.9
+    matchLabels:
+      name: registry-creds
   template:
     metadata:
       labels:
         name: registry-creds
-        version: v1.9
     spec:
       containers:
       - image: upmcenterprises/registry-creds:1.9
