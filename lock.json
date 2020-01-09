@@ -287,8 +287,8 @@
         },
         {
             "name": "github.com/stretchr/testify",
-            "version": "v1.1.4",
-            "revision": "69483b4bd14f5845b5a1e55bca19e954e827f1d0",
+            "version": "v1.4.0",
+            "revision": "221dbe5ed46703ee255b1da0dec05086f5035f62",
             "packages": [
                 "assert"
             ]

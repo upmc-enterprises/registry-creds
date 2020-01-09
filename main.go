@@ -44,7 +44,7 @@ import (
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	"k8s.io/client-go/pkg/api/v1"
+	v1 "k8s.io/client-go/pkg/api/v1"
 )
 
 const (
@@ -56,6 +56,9 @@ const (
 	dockerPrivateRegistryPasswordKey = "DOCKER_PRIVATE_REGISTRY_PASSWORD"
 	dockerPrivateRegistryServerKey   = "DOCKER_PRIVATE_REGISTRY_SERVER"
 	dockerPrivateRegistryUserKey     = "DOCKER_PRIVATE_REGISTRY_USER"
+	acrURLKey                        = "ACR_URL"
+	acrClientIDKey                   = "ACR_CLIENT_ID"
+	acrPasswordKey                   = "ACR_PASSWORD"
 	tokenGenRetryTypeKey             = "TOKEN_RETRY_TYPE"
 	tokenGenRetriesKey               = "TOKEN_RETRIES"
 	tokenGenRetryDelayKey            = "TOKEN_RETRY_DELAY"
@@ -71,11 +74,15 @@ var (
 	argAWSSecretName         = flags.String("aws-secret-name", "awsecr-cred", `Default AWS secret name`)
 	argDPRSecretName         = flags.String("dpr-secret-name", "dpr-secret", `Default Docker Private Registry secret name`)
 	argGCRSecretName         = flags.String("gcr-secret-name", "gcr-secret", `Default GCR secret name`)
+	argACRSecretName         = flags.String("acr-secret-name", "acr-secret", "Default Azure Container Registry secret name")
 	argGCRURL                = flags.String("gcr-url", "https://gcr.io", `Default GCR URL`)
 	argAWSRegion             = flags.String("aws-region", "us-east-1", `Default AWS region`)
 	argDPRPassword           = flags.String("dpr-password", "", "Docker Private Registry password")
 	argDPRServer             = flags.String("dpr-server", "", "Docker Private Registry server")
 	argDPRUser               = flags.String("dpr-user", "", "Docker Private Registry user")
+	argACRURL                = flags.String("acr-url", "", "Azure Container Registry URL")
+	argACRClientID           = flags.String("acr-client-id", "", "Azure Container Registry client ID (user name)")
+	argACRPassword           = flags.String("acr-password", "", "Azure Container Registry password (client secret)")
 	argRefreshMinutes        = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
 	argSkipKubeSystem        = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
 	argAWSAssumeRole         = flags.String("aws_assume_role", "", `If specified AWS will assume this role and use it to retrieve tokens`)
@@ -109,6 +116,7 @@ type controller struct {
 	ecrClient ecrInterface
 	gcrClient gcrInterface
 	dprClient dprInterface
+	acrClient acrInterface
 }
 
 // RetryConfig represents the number of retries + the retry delay for retrying an operation if it should fail
@@ -129,6 +137,10 @@ type ecrInterface interface {
 
 type gcrInterface interface {
 	DefaultTokenSource(ctx context.Context, scope ...string) (oauth2.TokenSource, error)
+}
+
+type acrInterface interface {
+	getAuthToken(registryURL, clientID, password string) (AuthToken, error)
 }
 
 func newEcrClient() ecrInterface {
@@ -270,6 +282,35 @@ func generateSecretObj(tokens []AuthToken, isJSONCfg bool, secretName string) (*
 	return secret, nil
 }
 
+type acrClient struct{}
+
+func (c acrClient) getAuthToken(registryURL, clientID, password string) (AuthToken, error) {
+	if registryURL == "" {
+		return AuthToken{}, fmt.Errorf("Azure Container Registry URL is missing; ensure %s parameter is set", acrURLKey)
+	}
+
+	if clientID == "" {
+		return AuthToken{}, fmt.Errorf("Client ID needed to access Azure Container Registry is missing; ensure %s parameter is set", acrClientIDKey)
+	}
+
+	if password == "" {
+		return AuthToken{}, fmt.Errorf("Password needed to access Azure Container Registry is missing; ensure %s paremeter is set", acrClientIDKey)
+	}
+
+	token := base64.StdEncoding.EncodeToString([]byte(strings.Join([]string{clientID, password}, ":")))
+
+	return AuthToken{AccessToken: token, Endpoint: registryURL}, nil
+}
+
+func (c *controller) getACRToken() ([]AuthToken, error) {
+	token, err := c.acrClient.getAuthToken(*argACRURL, *argACRClientID, *argACRPassword)
+	return []AuthToken{token}, err
+}
+
+func newACRClient() acrInterface {
+	return acrClient{}
+}
+
 // AuthToken represents an Access Token and an Endpoint for a registry service
 type AuthToken struct {
 	AccessToken string
@@ -302,6 +343,12 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 		TokenGenFxn: c.getDPRToken,
 		IsJSONCfg:   true,
 		SecretName:  *argDPRSecretName,
+	})
+
+	secretGenerators = append(secretGenerators, SecretGenerator{
+		TokenGenFxn: c.getACRToken,
+		IsJSONCfg:   true,
+		SecretName:  *argACRSecretName,
 	})
 
 	return secretGenerators
@@ -451,6 +498,9 @@ func validateParams() {
 	dprPassword := os.Getenv(dockerPrivateRegistryPasswordKey)
 	dprServer := os.Getenv(dockerPrivateRegistryServerKey)
 	dprUser := os.Getenv(dockerPrivateRegistryUserKey)
+	acrURL := os.Getenv(acrURLKey)
+	acrClientID := os.Getenv(acrClientIDKey)
+	acrPassword := os.Getenv(acrPasswordKey)
 	gcrURLEnv := os.Getenv("gcrurl")
 
 	// initialize the retry configuration using command line values
@@ -542,6 +592,18 @@ func validateParams() {
 	if len(argAWSAssumeRoleEnv) > 0 {
 		argAWSAssumeRole = &argAWSAssumeRoleEnv
 	}
+
+	if len(acrURL) > 0 {
+		argACRURL = &acrURL
+	}
+
+	if len(acrClientID) > 0 {
+		argACRClientID = &acrClientID
+	}
+
+	if len(acrPassword) > 0 {
+		argACRPassword = &acrPassword
+	}
 }
 
 func handler(c *controller, ns *v1.Namespace) error {
@@ -592,7 +654,8 @@ func main() {
 	ecrClient := newEcrClient()
 	gcrClient := newGcrClient()
 	dprClient := newDprClient()
-	c := &controller{util, ecrClient, gcrClient, dprClient}
+	acrClient := newACRClient()
+	c := &controller{util, ecrClient, gcrClient, dprClient, acrClient}
 
 	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *v1.Namespace) error {
 		return handler(c, ns)

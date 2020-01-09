@@ -5,7 +5,7 @@ Allow for Registry credentials to be refreshed inside your Kubernetes cluster vi
 ## How it works
 
 1. The tool runs as a pod in the `kube-system` namespace.
-- It gets credentials from AWS ECR or Google Container Registry
+- It gets credentials from AWS ECR, Google Container Registry, Docker private registry, or Azure Container Registry.
 - Next it creates a secret with credentials for your registry
 - Then it sets up this secret to be used in the `ImagePullSecrets` for the default service account
 - Whenever a pod is created, this secret is attached to the pod
@@ -27,6 +27,9 @@ The following parameters are driven via Environment variables.
   - TOKEN_RETRY_TYPE: The type of Timer to use when getting a registry token fails and must be retried; "simple" or "exponential" (default: simple)
   - TOKEN_RETRIES: The number of times to retry getting a registry token if an error occurred (default: 3)
   - TOKEN_RETRY_DELAY: The number of seconds to delay between successive retries at getting a registry token; applies to "simple" retry timer only (default: 5)
+  - GCRURL: URL to Google Container Registry
+  - DOCKER_PRIVATE_REGISTRY_SERVER, DOCKER_PRIVATE_REGISTRY_USER, DOCKER_PRIVATE_REGISTRY_PASSWORD: the URL, user name, and password for a Docker private registry
+  - ACR_URL, ACR_CLIENT_ID, ACR_PASSWORD: the registry URL, client ID, and password to access to access an Azure Container Registry.
 
 ## How to setup running in AWS
 
@@ -98,6 +101,30 @@ The value for `application_default_credentials.json` can be obtained with the fo
 1. Clone the repo and navigate to directory
 
 2. Edit the sample [secret](k8s/secret.yaml) and update values for `DOCKER_PRIVATE_REGISTRY_SERVER`, `DOCKER_PRIVATE_REGISTRY_USER`, and `DOCKER_PRIVATE_REGISTRY_PASSWORD` (base64 encoded).
+
+   ```bash
+   echo -n "secret-key" | base64
+   ```
+
+3. Create the secret in kubernetes
+
+   ```bash
+   kubectl create -f k8s/secret.yml
+   ```
+
+4. Create the replication controller:
+
+   ```bash
+   kubectl create -f k8s/replicationController.yaml
+   ```
+
+## How to set up Azure Container Registry
+
+1. [Create a service principal](https://docs.microsoft.com/en-us/azure/container-registry/container-registry-auth-service-principal) that your Kubernetes cluster will use to access the registry.
+
+2. Clone the repo and navigate to the repo root
+
+3. Edit the sample [secret](k8s/secret.yaml) and update values for `ACR_URL`, `ACR_CLIENT_ID`, and `ACR_PASSWORD` (base64 encoded). Use service principal application ID as the client ID, and service principal password (client secret) as the password.
 
    ```bash
    echo -n "secret-key" | base64
