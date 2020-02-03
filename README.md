@@ -31,6 +31,30 @@ The following parameters are driven via Environment variables.
   - DOCKER_PRIVATE_REGISTRY_SERVER, DOCKER_PRIVATE_REGISTRY_USER, DOCKER_PRIVATE_REGISTRY_PASSWORD: the URL, user name, and password for a Docker private registry
   - ACR_URL, ACR_CLIENT_ID, ACR_PASSWORD: the registry URL, client ID, and password to access to access an Azure Container Registry.
 
+## Setup Minikube
+
+```bash
+# Ensure the addon is enabled.
+minikube addons enable registry-creds
+
+# Generate the secret manifest and create the resources.
+cd contrib && ./generate-secrets.sh
+```
+
+To use the credentials, either patch the service account:
+```bash
+kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "awsecr-cred"}]}'
+```
+
+Or add in the `imagePullSecrets` section in your `deployment.yaml` file:
+```bash
+spec:
+  imagePullSecrets:
+  - name: awsecr-cred
+```
+
+See the last section of the [Configure Service Account](https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/) documentation page for full reference.
+
 ## How to setup running in AWS
 
 1. Clone the repo and navigate to directory
