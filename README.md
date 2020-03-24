@@ -63,10 +63,10 @@ The following parameters are driven via Environment variables.
       kubectl create -f k8s/secret.yaml
       ```
 
-3. Create the replication controller.
+3. Create the deployment.
 
    ```bash
-   kubectl create -f k8s/replicationController.yaml
+   kubectl create -f k8s/deployment.yaml
    ```
 
    > **NOTE:** If running on premise, no need to provide `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` since that will come from the EC2 instance.
@@ -90,10 +90,10 @@ The value for `application_default_credentials.json` can be obtained with the fo
    kubectl create -f k8s/secret.yml
    ```
 
-4. Create the replication controller:
+4. Create the deployment:
 
    ```bash
-   kubectl create -f k8s/replicationController.yaml
+   kubectl create -f k8s/deployment.yaml
    ```
 
 ## How to setup running in Docker Private Registry
@@ -112,10 +112,10 @@ The value for `application_default_credentials.json` can be obtained with the fo
    kubectl create -f k8s/secret.yml
    ```
 
-4. Create the replication controller:
+4. Create the deployment:
 
    ```bash
-   kubectl create -f k8s/replicationController.yaml
+   kubectl create -f k8s/deployment.yaml
    ```
 
 ## How to set up Azure Container Registry
@@ -136,10 +136,10 @@ The value for `application_default_credentials.json` can be obtained with the fo
    kubectl create -f k8s/secret.yml
    ```
 
-4. Create the replication controller:
+4. Create the deployment:
 
    ```bash
-   kubectl create -f k8s/replicationController.yaml
+   kubectl create -f k8s/deployment.yaml
    ```
 
 ## DockerHub Image
