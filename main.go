@@ -28,23 +28,23 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/cenkalti/backoff"
+	"github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
-	"github.com/upmc-enterprises/registry-creds/k8sutil"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	v1 "k8s.io/client-go/pkg/api/v1"
+	v1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -112,7 +112,7 @@ type registryAuth struct {
 }
 
 type controller struct {
-	k8sutil   *k8sutil.K8sutilInterface
+	k8sutil   *K8sutilInterface
 	ecrClient ecrInterface
 	gcrClient gcrInterface
 	dprClient dprInterface
@@ -254,7 +254,7 @@ func (c *controller) getECRAuthorizationKey() ([]AuthToken, error) {
 
 func generateSecretObj(tokens []AuthToken, isJSONCfg bool, secretName string) (*v1.Secret, error) {
 	secret := &v1.Secret{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: v12.ObjectMeta{
 			Name: secretName,
 		},
 	}
@@ -645,7 +645,7 @@ func main() {
 	logrus.Info("Token Generation Retries: ", RetryCfg.NumberOfRetries)
 	logrus.Info("Token Generation Retry Delay (seconds): ", RetryCfg.RetryDelayInSeconds)
 
-	util, err := k8sutil.New(*argKubecfgFile, *argKubeMasterURL)
+	util, err := New(*argKubecfgFile, *argKubeMasterURL)
 
 	if err != nil {
 		logrus.Error("Could not create k8s client!!", err)
