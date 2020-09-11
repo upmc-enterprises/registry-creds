@@ -1,9 +1,16 @@
-FROM alpine:3.4
-MAINTAINER Steve Sloka <steve@stevesloka.com>
+# Start by building the application.
+FROM golang:1.14-buster as build
 
-RUN apk add --update ca-certificates && \
-  rm -rf /var/cache/apk/*
+WORKDIR /go/src/app
+ADD . /go/src/app/registry-creds
 
-COPY registry-creds registry-creds
+RUN go get -d -v ./...
 
-ENTRYPOINT ["/registry-creds"]
+WORKDIR /go/src/app/registry-creds
+RUN go test
+RUN GOOS=linux GOARCH=amd64 go build -v -ldflags="-w -s" -o /go/bin/app/registry-creds
+
+# Now copy it into our base image.
+FROM gcr.io/distroless/base
+COPY --from=build /go/bin/app/registry-creds /
+CMD ["/registry-creds"]
