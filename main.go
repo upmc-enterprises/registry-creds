@@ -28,23 +28,23 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/cenkalti/backoff"
+	"github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
-	"github.com/upmc-enterprises/registry-creds/k8sutil"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	v1 "k8s.io/client-go/pkg/api/v1"
+	v1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -75,7 +75,7 @@ var (
 	argDPRSecretName         = flags.String("dpr-secret-name", "dpr-secret", `Default Docker Private Registry secret name`)
 	argGCRSecretName         = flags.String("gcr-secret-name", "gcr-secret", `Default GCR secret name`)
 	argACRSecretName         = flags.String("acr-secret-name", "acr-secret", "Default Azure Container Registry secret name")
-	argGCRURL                = flags.String("gcr-url", "https://gcr.io", `Default GCR URL`)
+	argGCRURL                = flags.String("gcr-url", "", `Default GCR URL`)
 	argAWSRegion             = flags.String("aws-region", "us-east-1", `Default AWS region`)
 	argDPRPassword           = flags.String("dpr-password", "", "Docker Private Registry password")
 	argDPRServer             = flags.String("dpr-server", "", "Docker Private Registry server")
@@ -83,7 +83,7 @@ var (
 	argACRURL                = flags.String("acr-url", "", "Azure Container Registry URL")
 	argACRClientID           = flags.String("acr-client-id", "", "Azure Container Registry client ID (user name)")
 	argACRPassword           = flags.String("acr-password", "", "Azure Container Registry password (client secret)")
-	argRefreshMinutes        = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
+	argRefreshMinutes        = flags.Int("refresh-mins", 2, `Default time to wait before refreshing (60 minutes)`)
 	argSkipKubeSystem        = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
 	argAWSAssumeRole         = flags.String("aws_assume_role", "", `If specified AWS will assume this role and use it to retrieve tokens`)
 	argTokenGenFxnRetryType  = flags.String("token-retry-type", defaultTokenGenRetryType, `The type of retry timer to use when generating a secret token; either simple or exponential (simple)`)
@@ -100,6 +100,11 @@ var (
 	// The retry backoff timers
 	simpleBackoff      *backoff.ConstantBackOff
 	exponentialBackoff *backoff.ExponentialBackOff
+
+	needACR = false
+	needAWS = false
+	needDPR = false
+	needGCR = false
 )
 
 type dockerJSON struct {
@@ -112,7 +117,7 @@ type registryAuth struct {
 }
 
 type controller struct {
-	k8sutil   *k8sutil.K8sutilInterface
+	k8sutil   *K8sutilInterface
 	ecrClient ecrInterface
 	gcrClient gcrInterface
 	dprClient dprInterface
@@ -254,7 +259,7 @@ func (c *controller) getECRAuthorizationKey() ([]AuthToken, error) {
 
 func generateSecretObj(tokens []AuthToken, isJSONCfg bool, secretName string) (*v1.Secret, error) {
 	secret := &v1.Secret{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: v12.ObjectMeta{
 			Name: secretName,
 		},
 	}
@@ -327,29 +332,37 @@ type SecretGenerator struct {
 func getSecretGenerators(c *controller) []SecretGenerator {
 	secretGenerators := make([]SecretGenerator, 0)
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getGCRAuthorizationKey,
-		IsJSONCfg:   false,
-		SecretName:  *argGCRSecretName,
-	})
+	if needGCR {
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: c.getGCRAuthorizationKey,
+			IsJSONCfg:   false,
+			SecretName:  *argGCRSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getECRAuthorizationKey,
-		IsJSONCfg:   true,
-		SecretName:  *argAWSSecretName,
-	})
+	if needAWS {
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: c.getECRAuthorizationKey,
+			IsJSONCfg:   true,
+			SecretName:  *argAWSSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getDPRToken,
-		IsJSONCfg:   true,
-		SecretName:  *argDPRSecretName,
-	})
+	if needDPR {
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: c.getDPRToken,
+			IsJSONCfg:   true,
+			SecretName:  *argDPRSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getACRToken,
-		IsJSONCfg:   true,
-		SecretName:  *argACRSecretName,
-	})
+	if needACR {
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: c.getACRToken,
+			IsJSONCfg:   true,
+			SecretName:  *argACRSecretName,
+		})
+	}
 
 	return secretGenerators
 }
@@ -604,27 +617,38 @@ func validateParams() {
 	if len(acrPassword) > 0 {
 		argACRPassword = &acrPassword
 	}
+
+	if *argACRURL != "" && *argACRClientID != "" && *argACRPassword != "" {
+		needACR = true
+	}
+
+	if len(awsAccountIDs) > 0 && *argAWSRegion != "" {
+		needAWS = true
+	}
+
+	if *argDPRUser != "" && *argDPRPassword != "" && *argDPRServer != "" {
+		needDPR = true
+	}
+
+	if *argGCRURL != "" {
+		needGCR = true
+	}
 }
 
 func handler(c *controller, ns *v1.Namespace) error {
-	logrus.Infof("Refreshing credentials for namespace %s", ns.GetName())
 	secrets := c.generateSecrets()
 	logrus.Infof("Got %d refreshed credentials for namespace %s", len(secrets), ns.GetName())
 	for _, secret := range secrets {
 		if *argSkipKubeSystem && ns.GetName() == "kube-system" {
 			continue
 		}
-
 		logrus.Infof("Processing secret for namespace %s, secret %s", ns.Name, secret.Name)
 
 		if err := c.processNamespace(ns, secret); err != nil {
 			logrus.Errorf("error processing secret for namespace %s, secret %s: %s", ns.Name, secret.Name, err)
 			return err
 		}
-
-		logrus.Infof("Finished processing secret for namespace %s, secret %s", ns.Name, secret.Name)
 	}
-	logrus.Infof("Finished refreshing credentials for namespace %s", ns.GetName())
 	return nil
 }
 
@@ -645,16 +669,32 @@ func main() {
 	logrus.Info("Token Generation Retries: ", RetryCfg.NumberOfRetries)
 	logrus.Info("Token Generation Retry Delay (seconds): ", RetryCfg.RetryDelayInSeconds)
 
-	util, err := k8sutil.New(*argKubecfgFile, *argKubeMasterURL)
+	util, err := New(*argKubecfgFile, *argKubeMasterURL)
 
 	if err != nil {
 		logrus.Error("Could not create k8s client!!", err)
 	}
 
-	ecrClient := newEcrClient()
-	gcrClient := newGcrClient()
-	dprClient := newDprClient()
-	acrClient := newACRClient()
+	var ecrClient ecrInterface
+	if needAWS {
+		logrus.Infof("Need AWS: %t", needAWS)
+		ecrClient = newEcrClient()
+	}
+	var gcrClient gcrInterface
+	if needGCR {
+		logrus.Infof("Need GCR: %t", needGCR)
+		gcrClient = newGcrClient()
+	}
+	var dprClient dprInterface
+	if needDPR {
+		logrus.Infof("Need DPR: %t", needDPR)
+		dprClient = newDprClient()
+	}
+	var acrClient acrInterface
+	if needACR {
+		logrus.Infof("Need ACR: %t", needACR)
+		acrClient = newACRClient()
+	}
 	c := &controller{util, ecrClient, gcrClient, dprClient, acrClient}
 
 	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *v1.Namespace) error {
