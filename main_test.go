@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	v14 "k8s.io/api/authentication/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	meta1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/typed/core/v1/fake"
@@ -28,15 +28,6 @@ import (
 func init() {
 	log.SetOutput(ioutil.Discard)
 	logrus.SetOutput(ioutil.Discard)
-}
-
-func disableRetries() {
-	RetryCfg = RetryConfig{
-		Type:                "simple",
-		NumberOfRetries:     0,
-		RetryDelayInSeconds: 1,
-	}
-	SetupRetryTimer()
 }
 
 func enableShortRetries() {
@@ -82,7 +73,7 @@ func (f *fakeKubeClient) ServiceAccounts(namespace string) coreType.ServiceAccou
 	return f.serviceaccounts[namespace]
 }
 
-func (f *fakeSecrets) Create(ctx context.Context, secret *v1.Secret, opts metav1.CreateOptions) (*v1.Secret, error) {
+func (f *fakeSecrets) Create(_ context.Context, secret *v1.Secret, _ meta1.CreateOptions) (*v1.Secret, error) {
 	_, ok := f.store[secret.Name]
 
 	if ok {
@@ -93,7 +84,7 @@ func (f *fakeSecrets) Create(ctx context.Context, secret *v1.Secret, opts metav1
 	return secret, nil
 }
 
-func (f *fakeSecrets) Update(ctx context.Context, secret *v1.Secret, opts metav1.UpdateOptions) (*v1.Secret, error) {
+func (f *fakeSecrets) Update(_ context.Context, secret *v1.Secret, _ meta1.UpdateOptions) (*v1.Secret, error) {
 	_, ok := f.store[secret.Name]
 
 	if !ok {
@@ -104,7 +95,7 @@ func (f *fakeSecrets) Update(ctx context.Context, secret *v1.Secret, opts metav1
 	return secret, nil
 }
 
-func (f *fakeSecrets) Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.Secret, error) {
+func (f *fakeSecrets) Get(_ context.Context, name string, _ meta1.GetOptions) (*v1.Secret, error) {
 	secret, ok := f.store[name]
 
 	if !ok {
@@ -114,27 +105,27 @@ func (f *fakeSecrets) Get(ctx context.Context, name string, opts metav1.GetOptio
 	return secret, nil
 }
 
-func (f *fakeSecrets) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (f *fakeSecrets) Delete(context.Context, string, meta1.DeleteOptions) error {
 	return nil
 }
-func (f *fakeSecrets) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+func (f *fakeSecrets) DeleteCollection(context.Context, meta1.DeleteOptions, meta1.ListOptions) error {
 	return nil
 }
-func (f *fakeSecrets) List(ctx context.Context, opts metav1.ListOptions) (*v1.SecretList, error) {
+func (f *fakeSecrets) List(context.Context, meta1.ListOptions) (*v1.SecretList, error) {
 	return nil, nil
 }
-func (f *fakeSecrets) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+func (f *fakeSecrets) Watch(context.Context, meta1.ListOptions) (watch.Interface, error) {
 	return nil, nil
 }
-func (f *fakeSecrets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Secret, err error) {
+func (f *fakeSecrets) Patch(context.Context, string, types.PatchType, []byte, meta1.PatchOptions, ...string) (result *v1.Secret, err error) {
 	return nil, nil
 }
 
-func (f *fakeServiceAccounts) Create(ctx context2.Context, serviceAccount *v1.ServiceAccount, opts metav1.CreateOptions) (*v1.ServiceAccount, error) {
+func (f *fakeServiceAccounts) Create(context2.Context, *v1.ServiceAccount, meta1.CreateOptions) (*v1.ServiceAccount, error) {
 	return nil, nil
 }
 
-func (f *fakeServiceAccounts) Update(ctx context2.Context, serviceAccount *v1.ServiceAccount, opts metav1.UpdateOptions) (*v1.ServiceAccount, error) {
+func (f *fakeServiceAccounts) Update(_ context2.Context, serviceAccount *v1.ServiceAccount, _ meta1.UpdateOptions) (*v1.ServiceAccount, error) {
 	serviceAccount, ok := f.store[serviceAccount.Name]
 
 	if !ok {
@@ -145,7 +136,7 @@ func (f *fakeServiceAccounts) Update(ctx context2.Context, serviceAccount *v1.Se
 	return serviceAccount, nil
 }
 
-func (f *fakeServiceAccounts) Delete(ctx context2.Context, name string, opts metav1.DeleteOptions) error {
+func (f *fakeServiceAccounts) Delete(_ context2.Context, name string, _ meta1.DeleteOptions) error {
 	_, ok := f.store[name]
 
 	if !ok {
@@ -156,11 +147,11 @@ func (f *fakeServiceAccounts) Delete(ctx context2.Context, name string, opts met
 	return nil
 }
 
-func (f *fakeServiceAccounts) DeleteCollection(ctx context2.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+func (f *fakeServiceAccounts) DeleteCollection(context2.Context, meta1.DeleteOptions, meta1.ListOptions) error {
 	return nil
 }
 
-func (f *fakeServiceAccounts) Get(ctx context2.Context, name string, opts metav1.GetOptions) (*v1.ServiceAccount, error) {
+func (f *fakeServiceAccounts) Get(_ context2.Context, name string, _ meta1.GetOptions) (*v1.ServiceAccount, error) {
 	serviceAccount, ok := f.store[name]
 
 	if !ok {
@@ -170,23 +161,23 @@ func (f *fakeServiceAccounts) Get(ctx context2.Context, name string, opts metav1
 	return serviceAccount, nil
 }
 
-func (f *fakeServiceAccounts) List(ctx context2.Context, opts metav1.ListOptions) (*v1.ServiceAccountList, error) {
+func (f *fakeServiceAccounts) List(context2.Context, meta1.ListOptions) (*v1.ServiceAccountList, error) {
 	return nil, nil
 }
 
-func (f *fakeServiceAccounts) Watch(ctx context2.Context, opts metav1.ListOptions) (watch.Interface, error) {
+func (f *fakeServiceAccounts) Watch(context2.Context, meta1.ListOptions) (watch.Interface, error) {
 	return nil, nil
 }
 
-func (f *fakeServiceAccounts) Patch(ctx context2.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ServiceAccount, err error) {
+func (f *fakeServiceAccounts) Patch(context2.Context, string, types.PatchType, []byte, meta1.PatchOptions, ...string) (result *v1.ServiceAccount, err error) {
 	return nil, nil
 }
 
-func (f *fakeServiceAccounts) CreateToken(ctx context2.Context, serviceAccountName string, tokenRequest *v14.TokenRequest, opts metav1.CreateOptions) (*v14.TokenRequest, error) {
+func (f *fakeServiceAccounts) CreateToken(context2.Context, string, *v14.TokenRequest, meta1.CreateOptions) (*v14.TokenRequest, error) {
 	return nil, nil
 }
 
-func (f *fakeNamespaces) List(ctx context.Context, opts metav1.ListOptions) (*v1.NamespaceList, error) {
+func (f *fakeNamespaces) List(context.Context, meta1.ListOptions) (*v1.NamespaceList, error) {
 	namespaces := make([]v1.Namespace, 0)
 
 	for _, v := range f.store {
@@ -196,34 +187,34 @@ func (f *fakeNamespaces) List(ctx context.Context, opts metav1.ListOptions) (*v1
 	return &v1.NamespaceList{Items: namespaces}, nil
 }
 
-func (f *fakeNamespaces) Create(ctx context.Context, namespace *v1.Namespace, opts metav1.CreateOptions) (*v1.Namespace, error) {
+func (f *fakeNamespaces) Create(context.Context, *v1.Namespace, meta1.CreateOptions) (*v1.Namespace, error) {
 	return nil, nil
 }
-func (f *fakeNamespaces) Get(ctx context.Context, name string, opts metav1.GetOptions) (result *v1.Namespace, err error) {
+func (f *fakeNamespaces) Get(context.Context, string, meta1.GetOptions) (result *v1.Namespace, err error) {
 	return nil, nil
 }
-func (f *fakeNamespaces) UpdateStatus(ctx context.Context, namespace *v1.Namespace, opts metav1.UpdateOptions) (*v1.Namespace, error) {
+func (f *fakeNamespaces) UpdateStatus(context.Context, *v1.Namespace, meta1.UpdateOptions) (*v1.Namespace, error) {
 	return nil, nil
 }
-func (f *fakeNamespaces) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (f *fakeNamespaces) Delete(context.Context, string, meta1.DeleteOptions) error {
 	return nil
 }
-func (f *fakeNamespaces) DeleteCollection(options *metav1.DeleteOptions, listOptions metav1.ListOptions) error {
+func (f *fakeNamespaces) DeleteCollection() error {
 	return nil
 }
-func (f *fakeNamespaces) Update(ctx context.Context, namespace *v1.Namespace, opts metav1.UpdateOptions) (*v1.Namespace, error) {
+func (f *fakeNamespaces) Update(context.Context, *v1.Namespace, meta1.UpdateOptions) (*v1.Namespace, error) {
 	return nil, nil
 }
-func (f *fakeNamespaces) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+func (f *fakeNamespaces) Watch(context.Context, meta1.ListOptions) (watch.Interface, error) {
 	return nil, nil
 }
-func (f *fakeNamespaces) Finalize(ctx context.Context, item *v1.Namespace, opts metav1.UpdateOptions) (*v1.Namespace, error) {
+func (f *fakeNamespaces) Finalize(context.Context, *v1.Namespace, meta1.UpdateOptions) (*v1.Namespace, error) {
 	return nil, nil
 }
-func (f *fakeNamespaces) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Namespace, err error) {
+func (f *fakeNamespaces) Patch(context.Context, string, types.PatchType, []byte, meta1.PatchOptions, ...string) (result *v1.Namespace, err error) {
 	return nil, nil
 }
-func (f *fakeNamespaces) Status(item *v1.Namespace) (*v1.Namespace, error) { return nil, nil }
+func (f *fakeNamespaces) Status() (*v1.Namespace, error) { return nil, nil }
 
 type fakeEcrClient struct{}
 
@@ -254,7 +245,7 @@ func (f *fakeEcrClient) GetAuthorizationToken(input *ecr.GetAuthorizationTokenIn
 
 type fakeFailingEcrClient struct{}
 
-func (f *fakeFailingEcrClient) GetAuthorizationToken(input *ecr.GetAuthorizationTokenInput) (*ecr.GetAuthorizationTokenOutput, error) {
+func (f *fakeFailingEcrClient) GetAuthorizationToken(*ecr.GetAuthorizationTokenInput) (*ecr.GetAuthorizationTokenOutput, error) {
 	return nil, errors.New("fake error")
 }
 
@@ -272,37 +263,37 @@ func newFakeTokenSource() fakeTokenSource {
 	return fakeTokenSource{}
 }
 
-func (f *fakeGcrClient) DefaultTokenSource(ctx context.Context, scope ...string) (oauth2.TokenSource, error) {
+func (f *fakeGcrClient) DefaultTokenSource(context.Context, ...string) (oauth2.TokenSource, error) {
 	return newFakeTokenSource(), nil
 }
 
 type fakeFailingGcrClient struct{}
 
-func (f *fakeFailingGcrClient) DefaultTokenSource(ctx context.Context, scope ...string) (oauth2.TokenSource, error) {
+func (f *fakeFailingGcrClient) DefaultTokenSource(context.Context, ...string) (oauth2.TokenSource, error) {
 	return nil, errors.New("fake error")
 }
 
 type fakeDprClient struct{}
 
-func (f *fakeDprClient) getAuthToken(server, user, password string) (AuthToken, error) {
+func (f *fakeDprClient) getAuthToken(string, string, string) (AuthToken, error) {
 	return AuthToken{AccessToken: "fakeToken", Endpoint: "fakeEndpoint"}, nil
 }
 
 type fakeFailingDprClient struct{}
 
-func (f *fakeFailingDprClient) getAuthToken(server, user, password string) (AuthToken, error) {
+func (f *fakeFailingDprClient) getAuthToken(string, string, string) (AuthToken, error) {
 	return AuthToken{}, errors.New("fake error")
 }
 
 type fakeACRClient struct{}
 
-func (f *fakeACRClient) getAuthToken(registryURL, clientID, pasword string) (AuthToken, error) {
+func (f *fakeACRClient) getAuthToken(string, string, string) (AuthToken, error) {
 	return AuthToken{AccessToken: "fakeACRToken", Endpoint: "fakeACREndpoint"}, nil
 }
 
 type fakeFailingACRClient struct{}
 
-func (f *fakeFailingACRClient) getAuthToken(registryURL, clientID, password string) (AuthToken, error) {
+func (f *fakeFailingACRClient) getAuthToken(string, string, string) (AuthToken, error) {
 	return AuthToken{}, errors.New("fake error")
 }
 
@@ -328,17 +319,17 @@ func newFakeKubeClient() KubeInterface {
 		},
 		namespaces: &fakeNamespaces{store: map[string]v1.Namespace{
 			"namespace1": {
-				ObjectMeta: metav1.ObjectMeta{
+				ObjectMeta: meta1.ObjectMeta{
 					Name: "namespace1",
 				},
 			},
 			"namespace2": {
-				ObjectMeta: metav1.ObjectMeta{
+				ObjectMeta: meta1.ObjectMeta{
 					Name: "namespace2",
 				},
 			},
 			"kube-system": {
-				ObjectMeta: metav1.ObjectMeta{
+				ObjectMeta: meta1.ObjectMeta{
 					Name: "kube-system",
 				},
 			},
@@ -347,7 +338,7 @@ func newFakeKubeClient() KubeInterface {
 			"namespace1": {
 				store: map[string]*v1.ServiceAccount{
 					"default": {
-						ObjectMeta: metav1.ObjectMeta{
+						ObjectMeta: meta1.ObjectMeta{
 							Name: "default",
 						},
 					},
@@ -356,7 +347,7 @@ func newFakeKubeClient() KubeInterface {
 			"namespace2": {
 				store: map[string]*v1.ServiceAccount{
 					"default": {
-						ObjectMeta: metav1.ObjectMeta{
+						ObjectMeta: meta1.ObjectMeta{
 							Name: "default",
 						},
 					},
@@ -365,7 +356,7 @@ func newFakeKubeClient() KubeInterface {
 			"kube-system": {
 				store: map[string]*v1.ServiceAccount{
 					"default": {
-						ObjectMeta: metav1.ObjectMeta{
+						ObjectMeta: meta1.ObjectMeta{
 							Name: "default",
 						},
 					},
@@ -408,7 +399,7 @@ func newFakeFailingACRClient() *fakeFailingACRClient {
 }
 
 func process(t *testing.T, c *controller) {
-	namespaces, _ := c.k8sutil.KubernetesCoreV1.Namespaces().List(context.TODO(), metav1.ListOptions{})
+	namespaces, _ := c.k8sutil.KubernetesCoreV1.Namespaces().List(context.TODO(), meta1.ListOptions{})
 	for _, ns := range namespaces.Items {
 		err := handler(c, &ns)
 		assert.Nil(t, err)
@@ -576,7 +567,7 @@ func TestProcessWithExistingSecrets(t *testing.T) {
 	c := newFakeController()
 
 	secretGCR := &v1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
+		ObjectMeta: meta1.ObjectMeta{
 			Name: *argGCRSecretName,
 		},
 		Data: map[string][]byte{
@@ -586,7 +577,7 @@ func TestProcessWithExistingSecrets(t *testing.T) {
 	}
 
 	secretAWS := &v1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
+		ObjectMeta: meta1.ObjectMeta{
 			Name: *argAWSSecretName,
 		},
 		Data: map[string][]byte{
@@ -596,7 +587,7 @@ func TestProcessWithExistingSecrets(t *testing.T) {
 	}
 
 	secretDPR := &v1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
+		ObjectMeta: meta1.ObjectMeta{
 			Name: *argDPRSecretName,
 		},
 		Data: map[string][]byte{
@@ -606,7 +597,7 @@ func TestProcessWithExistingSecrets(t *testing.T) {
 	}
 
 	secretACR := &v1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
+		ObjectMeta: meta1.ObjectMeta{
 			Name: *argACRSecretName,
 		},
 		Data: map[string][]byte{
