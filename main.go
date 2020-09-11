@@ -682,22 +682,22 @@ func main() {
 
 	var ecrClient ecrInterface
 	if needAWS {
-		logrus.Infof("Need AWS: %s", needAWS)
+		logrus.Infof("Need AWS: %t", needAWS)
 		ecrClient = newEcrClient()
 	}
 	var gcrClient gcrInterface
 	if needGCR {
-		logrus.Infof("Need GCR: %s", needGCR)
+		logrus.Infof("Need GCR: %t", needGCR)
 		gcrClient = newGcrClient()
 	}
 	var dprClient dprInterface
 	if needDPR {
-		logrus.Infof("Need DPR: %s", needDPR)
+		logrus.Infof("Need DPR: %t", needDPR)
 		dprClient = newDprClient()
 	}
 	var acrClient acrInterface
 	if needACR {
-		logrus.Infof("Need ACR: %s", needACR)
+		logrus.Infof("Need ACR: %t", needACR)
 		acrClient = newACRClient()
 	}
 	c := &controller{util, ecrClient, gcrClient, dprClient, acrClient}
