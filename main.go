@@ -340,7 +340,7 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 		})
 	}
 
-	if needGCR {
+	if needAWS {
 		secretGenerators = append(secretGenerators, SecretGenerator{
 			TokenGenFxn: c.getECRAuthorizationKey,
 			IsJSONCfg:   true,
@@ -636,24 +636,19 @@ func validateParams() {
 }
 
 func handler(c *controller, ns *v1.Namespace) error {
-	logrus.Infof("Refreshing credentials for namespace %s", ns.GetName())
 	secrets := c.generateSecrets()
 	logrus.Infof("Got %d refreshed credentials for namespace %s", len(secrets), ns.GetName())
 	for _, secret := range secrets {
 		if *argSkipKubeSystem && ns.GetName() == "kube-system" {
 			continue
 		}
-
 		logrus.Infof("Processing secret for namespace %s, secret %s", ns.Name, secret.Name)
 
 		if err := c.processNamespace(ns, secret); err != nil {
 			logrus.Errorf("error processing secret for namespace %s, secret %s: %s", ns.Name, secret.Name, err)
 			return err
 		}
-
-		logrus.Infof("Finished processing secret for namespace %s, secret %s", ns.Name, secret.Name)
 	}
-	logrus.Infof("Finished refreshing credentials for namespace %s", ns.GetName())
 	return nil
 }
 
