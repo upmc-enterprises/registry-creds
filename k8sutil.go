@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/informers"
 	"log"
 	"time"
 
@@ -154,23 +154,21 @@ func (k *K8sutilInterface) UpdateServiceAccount(namespace string, sa *core_v1.Se
 }
 
 func (k *K8sutilInterface) WatchNamespaces(resyncPeriod time.Duration, handler func(*core_v1.Namespace) error) {
+	factory := informers.NewSharedInformerFactory(k.Kclient.(kubernetes.Interface), resyncPeriod)
+	informer := factory.Core().V1().Namespaces().Informer()
 	stopC := make(chan struct{})
-	_, c := cache.NewInformer(
-		cache.NewListWatchFromClient(k.Kclient.CoreV1().RESTClient(), "namespaces", core_v1.NamespaceAll, fields.Everything()),
-		&core_v1.Namespace{},
-		resyncPeriod,
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				if err := handler(obj.(*core_v1.Namespace)); err != nil {
-					log.Println(err)
-				}
-			},
-			UpdateFunc: func(_ interface{}, obj interface{}) {
-				if err := handler(obj.(*core_v1.Namespace)); err != nil {
-					log.Println(err)
-				}
-			},
+	defer close(stopC)
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			if err := handler(obj.(*core_v1.Namespace)); err != nil {
+				log.Println(err)
+			}
 		},
-	)
-	c.Run(stopC)
+		UpdateFunc: func(_ interface{}, obj interface{}) {
+			if err := handler(obj.(*core_v1.Namespace)); err != nil {
+				log.Println(err)
+			}
+		},
+	})
+	informer.Run(stopC)
 }

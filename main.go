@@ -327,29 +327,37 @@ type SecretGenerator struct {
 func getSecretGenerators(c *controller) []SecretGenerator {
 	secretGenerators := make([]SecretGenerator, 0)
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getGCRAuthorizationKey,
-		IsJSONCfg:   false,
-		SecretName:  *argGCRSecretName,
-	})
+	if *argGCRURL != "" {
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: c.getGCRAuthorizationKey,
+			IsJSONCfg:   false,
+			SecretName:  *argGCRSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getECRAuthorizationKey,
-		IsJSONCfg:   true,
-		SecretName:  *argAWSSecretName,
-	})
+	if *argAWSRegion != "" {
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: c.getECRAuthorizationKey,
+			IsJSONCfg:   true,
+			SecretName:  *argAWSSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getDPRToken,
-		IsJSONCfg:   true,
-		SecretName:  *argDPRSecretName,
-	})
+	if *argDPRServer != "" {
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: c.getDPRToken,
+			IsJSONCfg:   true,
+			SecretName:  *argDPRSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getACRToken,
-		IsJSONCfg:   true,
-		SecretName:  *argACRSecretName,
-	})
+	if *argACRClientID != "" {
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: c.getACRToken,
+			IsJSONCfg:   true,
+			SecretName:  *argACRSecretName,
+		})
+	}
 
 	return secretGenerators
 }
