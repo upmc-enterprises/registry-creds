@@ -308,8 +308,8 @@ func (f *fakeFailingACRClient) getAuthToken(registryURL, clientID, password stri
 
 func newKubeUtil() *K8sutilInterface {
 	return &K8sutilInterface{
-		Kclient:    newFakeKubeClient(),
-		MasterHost: "foo",
+		KubernetesCoreV1: newFakeKubeClient(),
+		MasterHost:       "foo",
 	}
 }
 
@@ -408,7 +408,7 @@ func newFakeFailingACRClient() *fakeFailingACRClient {
 }
 
 func process(t *testing.T, c *controller) {
-	namespaces, _ := c.k8sutil.Kclient.Namespaces().List(context.TODO(), metav1.ListOptions{})
+	namespaces, _ := c.k8sutil.KubernetesCoreV1.Namespaces().List(context.TODO(), metav1.ListOptions{})
 	for _, ns := range namespaces.Items {
 		err := handler(c, &ns)
 		assert.Nil(t, err)

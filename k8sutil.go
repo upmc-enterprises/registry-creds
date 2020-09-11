@@ -24,8 +24,9 @@ type KubeInterface interface {
 }
 
 type K8sutilInterface struct {
-	Kclient    KubeInterface
-	MasterHost string
+	KubernetesClient kubernetes.Interface
+	KubernetesCoreV1 KubeInterface
+	MasterHost       string
 }
 
 // New creates a new instance of k8sutil
@@ -38,8 +39,9 @@ func New(kubeCfgFile, masterHost string) (*K8sutilInterface, error) {
 	}
 
 	k := &K8sutilInterface{
-		Kclient:    client.CoreV1().(KubeInterface),
-		MasterHost: masterHost,
+		KubernetesClient: client,
+		KubernetesCoreV1: client.CoreV1().(KubeInterface),
+		MasterHost:       masterHost,
 	}
 
 	return k, nil
@@ -84,7 +86,7 @@ func newKubeClient(kubeCfgFile string) (*kubernetes.Clientset, error) {
 
 // GetNamespaces returns all namespaces
 func (k *K8sutilInterface) GetNamespaces() (*core_v1.NamespaceList, error) {
-	namespaces, err := k.Kclient.Namespaces().List(context.TODO(), v12.ListOptions{})
+	namespaces, err := k.KubernetesCoreV1.Namespaces().List(context.TODO(), v12.ListOptions{})
 	if err != nil {
 		logrus.Error("Error getting namespaces: ", err)
 		return nil, err
@@ -95,7 +97,7 @@ func (k *K8sutilInterface) GetNamespaces() (*core_v1.NamespaceList, error) {
 
 // GetSecret get a secret
 func (k *K8sutilInterface) GetSecret(namespace, secretname string) (*core_v1.Secret, error) {
-	secret, err := k.Kclient.Secrets(namespace).Get(context.TODO(), secretname, v12.GetOptions{})
+	secret, err := k.KubernetesCoreV1.Secrets(namespace).Get(context.TODO(), secretname, v12.GetOptions{})
 	if err != nil {
 		logrus.Error("Error getting secret: ", err)
 		return nil, err
@@ -106,7 +108,7 @@ func (k *K8sutilInterface) GetSecret(namespace, secretname string) (*core_v1.Sec
 
 // CreateSecret creates a secret
 func (k *K8sutilInterface) CreateSecret(namespace string, secret *core_v1.Secret) error {
-	_, err := k.Kclient.Secrets(namespace).Create(context.TODO(), secret, v12.CreateOptions{})
+	_, err := k.KubernetesCoreV1.Secrets(namespace).Create(context.TODO(), secret, v12.CreateOptions{})
 
 	if err != nil {
 		logrus.Error("Error creating secret: ", err)
@@ -118,7 +120,7 @@ func (k *K8sutilInterface) CreateSecret(namespace string, secret *core_v1.Secret
 
 // UpdateSecret updates a secret
 func (k *K8sutilInterface) UpdateSecret(namespace string, secret *core_v1.Secret) error {
-	_, err := k.Kclient.Secrets(namespace).Update(context.TODO(), secret, v12.UpdateOptions{})
+	_, err := k.KubernetesCoreV1.Secrets(namespace).Update(context.TODO(), secret, v12.UpdateOptions{})
 
 	if err != nil {
 		logrus.Error("Error updating secret: ", err)
@@ -130,7 +132,7 @@ func (k *K8sutilInterface) UpdateSecret(namespace string, secret *core_v1.Secret
 
 // GetServiceAccount updates a secret
 func (k *K8sutilInterface) GetServiceAccount(namespace, name string) (*core_v1.ServiceAccount, error) {
-	sa, err := k.Kclient.ServiceAccounts(namespace).Get(context.TODO(), name, v12.GetOptions{})
+	sa, err := k.KubernetesCoreV1.ServiceAccounts(namespace).Get(context.TODO(), name, v12.GetOptions{})
 
 	if err != nil {
 		logrus.Error("Error getting service account: ", err)
@@ -142,7 +144,7 @@ func (k *K8sutilInterface) GetServiceAccount(namespace, name string) (*core_v1.S
 
 // UpdateServiceAccount updates a secret
 func (k *K8sutilInterface) UpdateServiceAccount(namespace string, sa *core_v1.ServiceAccount) error {
-	_, err := k.Kclient.ServiceAccounts(namespace).Update(context.TODO(), sa, v12.UpdateOptions{})
+	_, err := k.KubernetesCoreV1.ServiceAccounts(namespace).Update(context.TODO(), sa, v12.UpdateOptions{})
 
 	if err != nil {
 		logrus.Error("Error updating service account: ", err)
@@ -153,7 +155,7 @@ func (k *K8sutilInterface) UpdateServiceAccount(namespace string, sa *core_v1.Se
 }
 
 func (k *K8sutilInterface) WatchNamespaces(resyncPeriod time.Duration, handler func(*core_v1.Namespace) error) {
-	factory := informers.NewSharedInformerFactory(k.Kclient.(kubernetes.Interface), resyncPeriod)
+	factory := informers.NewSharedInformerFactory(k.KubernetesClient, resyncPeriod)
 	informer := factory.Core().V1().Namespaces().Informer()
 	stopC := make(chan struct{})
 	defer close(stopC)
