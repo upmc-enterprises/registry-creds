@@ -467,50 +467,67 @@ func assertSecretPresent(t *testing.T, secrets []v1.LocalObjectReference, name s
 }
 
 func assertAllSecretsPresent(t *testing.T, secrets []v1.LocalObjectReference) {
-	assertSecretPresent(t, secrets, *argAWSSecretName)
-	assertSecretPresent(t, secrets, *argDPRSecretName)
-	assertSecretPresent(t, secrets, *argGCRSecretName)
-	assertSecretPresent(t, secrets, *argACRSecretName)
+	if needAWS {
+		assertSecretPresent(t, secrets, *argAWSSecretName)
+	}
+	if needDPR {
+		assertSecretPresent(t, secrets, *argDPRSecretName)
+	}
+	if needGCR {
+		assertSecretPresent(t, secrets, *argGCRSecretName)
+	}
+	if needACR {
+		assertSecretPresent(t, secrets, *argACRSecretName)
+	}
 }
 
 func assertAllExpectedSecrets(t *testing.T, c *controller) {
 	// Test GCR
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		secret, err := c.k8sutil.GetSecret(ns, *argGCRSecretName)
-		assert.Nil(t, err)
-		assert.Equal(t, *argGCRSecretName, secret.Name)
-		assert.Equal(t, map[string][]byte{
-			".dockercfg": []byte(fmt.Sprintf(dockerCfgTemplate, "fakeEndpoint", "fakeToken")),
-		}, secret.Data)
-		assert.Equal(t, v1.SecretType("kubernetes.io/dockercfg"), secret.Type)
+	if needGCR {
+		for _, ns := range []string{"namespace1", "namespace2"} {
+			secret, err := c.k8sutil.GetSecret(ns, *argGCRSecretName)
+			assert.Nil(t, err)
+			assert.Equal(t, *argGCRSecretName, secret.Name)
+			assert.Equal(t, map[string][]byte{
+				".dockercfg": []byte(fmt.Sprintf(dockerCfgTemplate, "fakeEndpoint", "fakeToken")),
+			}, secret.Data)
+			assert.Equal(t, v1.SecretType("kubernetes.io/dockercfg"), secret.Type)
+		}
+
+		_, err := c.k8sutil.GetSecret("kube-system", *argGCRSecretName)
+		assert.NotNil(t, err)
 	}
 
-	_, err := c.k8sutil.GetSecret("kube-system", *argGCRSecretName)
-	assert.NotNil(t, err)
+	if needAWS {
 
-	// Test AWS
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		secret, err := c.k8sutil.GetSecret(ns, *argAWSSecretName)
-		assert.Nil(t, err)
-		assert.Equal(t, *argAWSSecretName, secret.Name)
-		assertDockerJSONContains(t, "fakeEndpoint", "fakeToken", secret)
-		assert.Equal(t, v1.SecretType("kubernetes.io/dockerconfigjson"), secret.Type)
+		// Test AWS
+		for _, ns := range []string{"namespace1", "namespace2"} {
+			secret, err := c.k8sutil.GetSecret(ns, *argAWSSecretName)
+			assert.Nil(t, err)
+			assert.Equal(t, *argAWSSecretName, secret.Name)
+			assertDockerJSONContains(t, "fakeEndpoint", "fakeToken", secret)
+			assert.Equal(t, v1.SecretType("kubernetes.io/dockerconfigjson"), secret.Type)
+		}
+
+		_, err := c.k8sutil.GetSecret("kube-system", *argAWSSecretName)
+		assert.NotNil(t, err)
 	}
 
-	_, err = c.k8sutil.GetSecret("kube-system", *argAWSSecretName)
-	assert.NotNil(t, err)
+	if needACR {
+		// Test Azure Container Registry support
+		for _, ns := range []string{"namespace1", "namespace2"} {
+			if *argACRClientID != "" {
+				secret, err := c.k8sutil.GetSecret(ns, *argACRSecretName)
+				assert.Nil(t, err)
+				assert.Equal(t, *argACRSecretName, secret.Name)
+				assertDockerJSONContains(t, "fakeACREndpoint", "fakeACRToken", secret)
+				assert.Equal(t, v1.SecretType("kubernetes.io/dockerconfigjson"), secret.Type)
+			}
+		}
 
-	// Test Azure Container Registry support
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		secret, err := c.k8sutil.GetSecret(ns, *argACRSecretName)
-		assert.Nil(t, err)
-		assert.Equal(t, *argACRSecretName, secret.Name)
-		assertDockerJSONContains(t, "fakeACREndpoint", "fakeACRToken", secret)
-		assert.Equal(t, v1.SecretType("kubernetes.io/dockerconfigjson"), secret.Type)
+		_, err := c.k8sutil.GetSecret("kube-system", *argACRSecretName)
+		assert.NotNil(t, err)
 	}
-
-	_, err = c.k8sutil.GetSecret("kube-system", *argACRSecretName)
-	assert.NotNil(t, err)
 
 	// Verify that all expected secrets have been created in all namespaces
 	serviceAccount, err := c.k8sutil.GetServiceAccount("namespace1", "default")
@@ -551,7 +568,7 @@ func TestProcessTwice(t *testing.T) {
 	assertAllExpectedSecrets(t, c)
 
 	// Verify that secrets have not been created twice
-	assertExpectedSecretNumber(t, c, 4)
+	assertExpectedSecretNumber(t, c, 0)
 }
 
 func TestProcessWithExistingSecrets(t *testing.T) {
@@ -608,7 +625,7 @@ func TestProcessWithExistingSecrets(t *testing.T) {
 	process(t, c)
 
 	assertAllExpectedSecrets(t, c)
-	assertExpectedSecretNumber(t, c, 4)
+	assertExpectedSecretNumber(t, c, 0)
 }
 
 // func TestProcessNoDefaultServiceAccount(t *testing.T) {

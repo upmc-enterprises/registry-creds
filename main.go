@@ -100,6 +100,11 @@ var (
 	// The retry backoff timers
 	simpleBackoff      *backoff.ConstantBackOff
 	exponentialBackoff *backoff.ExponentialBackOff
+
+	needACR = false
+	needAWS = false
+	needDPR = false
+	needGCR = false
 )
 
 type dockerJSON struct {
@@ -327,7 +332,7 @@ type SecretGenerator struct {
 func getSecretGenerators(c *controller) []SecretGenerator {
 	secretGenerators := make([]SecretGenerator, 0)
 
-	if *argGCRURL != "" {
+	if needGCR {
 		secretGenerators = append(secretGenerators, SecretGenerator{
 			TokenGenFxn: c.getGCRAuthorizationKey,
 			IsJSONCfg:   false,
@@ -335,7 +340,7 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 		})
 	}
 
-	if *argAWSRegion != "" {
+	if needGCR {
 		secretGenerators = append(secretGenerators, SecretGenerator{
 			TokenGenFxn: c.getECRAuthorizationKey,
 			IsJSONCfg:   true,
@@ -343,7 +348,7 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 		})
 	}
 
-	if *argDPRServer != "" {
+	if needDPR {
 		secretGenerators = append(secretGenerators, SecretGenerator{
 			TokenGenFxn: c.getDPRToken,
 			IsJSONCfg:   true,
@@ -351,7 +356,7 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 		})
 	}
 
-	if *argACRClientID != "" {
+	if needACR {
 		secretGenerators = append(secretGenerators, SecretGenerator{
 			TokenGenFxn: c.getACRToken,
 			IsJSONCfg:   true,
@@ -612,6 +617,22 @@ func validateParams() {
 	if len(acrPassword) > 0 {
 		argACRPassword = &acrPassword
 	}
+
+	if *argACRURL != "" && *argACRClientID != "" && *argACRPassword != "" {
+		needACR = true
+	}
+
+	if len(awsAccountIDs) > 0 && *argAWSRegion != "" {
+		needAWS = true
+	}
+
+	if *argDPRUser != "" && *argDPRPassword != "" && *argDPRServer != "" {
+		needDPR = true
+	}
+
+	if *argGCRURL != "" {
+		needGCR = true
+	}
 }
 
 func handler(c *controller, ns *v1.Namespace) error {
@@ -659,10 +680,22 @@ func main() {
 		logrus.Error("Could not create k8s client!!", err)
 	}
 
-	ecrClient := newEcrClient()
-	gcrClient := newGcrClient()
-	dprClient := newDprClient()
-	acrClient := newACRClient()
+	var ecrClient ecrInterface
+	if needAWS {
+		ecrClient = newEcrClient()
+	}
+	var gcrClient gcrInterface
+	if needGCR {
+		gcrClient = newGcrClient()
+	}
+	var dprClient dprInterface
+	if needDPR {
+		dprClient = newDprClient()
+	}
+	var acrClient acrInterface
+	if needACR {
+		acrClient = newACRClient()
+	}
 	c := &controller{util, ecrClient, gcrClient, dprClient, acrClient}
 
 	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *v1.Namespace) error {
