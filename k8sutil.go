@@ -21,7 +21,6 @@ type KubeInterface interface {
 	Secrets(namespace string) coreType.SecretInterface
 	Namespaces() coreType.NamespaceInterface
 	ServiceAccounts(namespace string) coreType.ServiceAccountInterface
-	CoreV1() coreType.CoreV1Interface
 }
 
 type K8sutilInterface struct {
