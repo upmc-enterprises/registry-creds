@@ -1,5 +1,6 @@
 kind: pipeline
-name: build
+type: docker
+name: Default
 
 platform:
   os: linux
