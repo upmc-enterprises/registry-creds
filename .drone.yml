@@ -35,7 +35,7 @@ steps:
     dockerfile: Dockerfile
     password:
       from_secret: dockerhub-pass
-    repo: "${CI_REPO}"
+    repo: "docker.io/${CI_REPO}"
     username: doddle
   when:
     branch:

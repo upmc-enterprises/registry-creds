@@ -1,3 +1,5 @@
+[![Build Status](https://ci.doddle.com/api/badges/doddle/registry-creds/status.svg?ref=refs/heads/master)](https://ci.doddle.com/doddle/registry-creds)
+
 # Registry Credentials
 
 Allow for Registry credentials to be refreshed inside your Kubernetes cluster via `ImagePullSecrets`.
