@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/stretchr/testify/assert"
-	"github.com/upmc-enterprises/registry-creds/k8sutil"
+	"github.com/ede-n/registry-creds/k8sutil"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	coreType "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -504,15 +504,20 @@ func TestProcessOnce(t *testing.T) {
 	*argGCRURL = "fakeEndpoint"
 	awsAccountIDs = []string{""}
 	c := newFakeController()
+	validateParams()
 
 	process(t, c)
 
 	assertAllExpectedSecrets(t, c)
+
+	// Verify that secrets have not been created twice
+	assertExpectedSecretNumber(t, c, 4)
 }
 
 func TestProcessTwice(t *testing.T) {
 	*argGCRURL = "fakeEndpoint"
 	c := newFakeController()
+	validateParams()
 
 	process(t, c)
 	// test processing twice for idempotency
@@ -527,6 +532,7 @@ func TestProcessTwice(t *testing.T) {
 func TestProcessWithExistingSecrets(t *testing.T) {
 	*argGCRURL = "fakeEndpoint"
 	c := newFakeController()
+	validateParams()
 
 	secretGCR := &v1.Secret{
 		ObjectMeta: v1.ObjectMeta{
@@ -599,6 +605,7 @@ func TestProcessWithExistingSecrets(t *testing.T) {
 
 func TestProcessWithExistingImagePullSecrets(t *testing.T) {
 	c := newFakeController()
+	validateParams()
 
 	for _, ns := range []string{"namespace1", "namespace2"} {
 		serviceAccount, err := c.k8sutil.GetServiceAccount(ns, "default")

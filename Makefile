@@ -8,6 +8,7 @@ PREFIX = upmcenterprises
 BIN = registry-creds
 
 GO111MODULE=off
+GO_BINARY=go1.8
 
 # docker build arguments for internal proxy
 ifneq ($(http_proxy),)
@@ -27,7 +28,7 @@ all: container
 
 .PHONY: build
 build: main.go
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -a -installsuffix cgo -o $(BIN) --ldflags '-w' $<
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO_BINARY) build -a -installsuffix cgo -o $(BIN) --ldflags '-w' $<
 
 .PHONY: container
 container: build
@@ -45,4 +46,9 @@ clean:
 
 .PHONY: test
 test: clean
-	go test -v $(go list ./... | grep -v vendor)
+	# $(GO_BINARY) test -v $(go list ./... | grep -v vendor)
+	$(GO_BINARY) test -v -run TestProcessOnce
+
+.PHONY: test-all
+test-all: clean
+	$(GO_BINARY) test -v $(go list ./... | grep -v vendor)

@@ -40,7 +40,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/cenkalti/backoff"
 	flag "github.com/spf13/pflag"
-	"github.com/upmc-enterprises/registry-creds/k8sutil"
+	"github.com/ede-n/registry-creds/k8sutil"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -85,6 +85,8 @@ var (
 	argACRPassword           = flags.String("acr-password", "", "Azure Container Registry password (client secret)")
 	argRefreshMinutes        = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
 	argSkipKubeSystem        = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
+	argExcludeNamespaces     = flags.String("exclude-namespaces", "", "Comma separated list of namespaces to avoid configuring ImagePullSecrets")
+	argIncludeNamespaces     = flags.String("include-namespaces", "", "Comma separated list of namespaces to configure ImagePullSecrets. '--exclude-namespaces' is ignored when both are specified. Defaults to all namespaces (\"\")")
 	argAWSAssumeRole         = flags.String("aws_assume_role", "", `If specified AWS will assume this role and use it to retrieve tokens`)
 	argTokenGenFxnRetryType  = flags.String("token-retry-type", defaultTokenGenRetryType, `The type of retry timer to use when generating a secret token; either simple or exponential (simple)`)
 	argTokenGenFxnRetries    = flags.Int("token-retries", defaultTokenGenRetries, `Default number of times to retry generating a secret token (3)`)
@@ -93,6 +95,10 @@ var (
 
 var (
 	awsAccountIDs []string
+
+	// Namespaces inclusion and exclusion lists
+	excludeNamespaces []string
+	includeNamespaces []string
 
 	// RetryCfg represents the currently-configured number of retries + retry delay
 	RetryCfg RetryConfig
@@ -503,6 +509,28 @@ func validateParams() {
 	acrPassword := os.Getenv(acrPasswordKey)
 	gcrURLEnv := os.Getenv("gcrurl")
 
+	// initialize namespace inclusions and exclusions
+	if len(*argIncludeNamespaces) > 0 && len(*argExcludeNamespaces) > 0 {
+		logrus.Errorf("Ignoring 'exclude-namespaces', as 'include-namespaces' is provided.")
+		excludeNamespaces = []string{}
+	}
+
+	if len(*argIncludeNamespaces) > 0 {
+		includeNamespaces = strings.Split(*argIncludeNamespaces, ",")
+	} else {
+		includeNamespaces = []string{}
+	}
+
+	if len(*argExcludeNamespaces) > 0 {
+		excludeNamespaces = strings.Split(*argExcludeNamespaces, ",")
+	} else {
+		excludeNamespaces = []string{}
+	}
+
+	if *argSkipKubeSystem {
+		excludeNamespaces = append(excludeNamespaces, "kube-system")
+	} 
+
 	// initialize the retry configuration using command line values
 	RetryCfg = RetryConfig{
 		Type:                *argTokenGenFxnRetryType,
@@ -607,14 +635,36 @@ func validateParams() {
 }
 
 func handler(c *controller, ns *v1.Namespace) error {
+	logrus.Info("Handling namespace watch event for %s", ns.GetName())
+
+	// process exclusions first, if set
+	for _, e := range excludeNamespaces {
+		if ns.GetName() == e {
+			logrus.Infof("Namespace %s in exclusion list. Skipping.", ns.GetName())
+			return nil
+		} 
+	}
+
+	// inclusion list is set
+	if len(includeNamespaces) > 0 {
+		ok := false
+		for _, i := range includeNamespaces {
+			if ns.GetName() == i {
+				ok = true
+				break
+			}
+		}
+	
+		if !ok {
+			logrus.Infof("Namespace %s is not in the inclusion list. Skipping.", ns.GetName())
+			return nil
+		}
+	}
+
 	logrus.Infof("Refreshing credentials for namespace %s", ns.GetName())
 	secrets := c.generateSecrets()
 	logrus.Infof("Got %d refreshed credentials for namespace %s", len(secrets), ns.GetName())
 	for _, secret := range secrets {
-		if *argSkipKubeSystem && ns.GetName() == "kube-system" {
-			continue
-		}
-
 		logrus.Infof("Processing secret for namespace %s, secret %s", ns.Name, secret.Name)
 
 		if err := c.processNamespace(ns, secret); err != nil {
