@@ -46,9 +46,4 @@ clean:
 
 .PHONY: test
 test: clean
-	# $(GO_BINARY) test -v $(go list ./... | grep -v vendor)
-	$(GO_BINARY) test -v -run TestProcessOnce
-
-.PHONY: test-all
-test-all: clean
 	$(GO_BINARY) test -v $(go list ./... | grep -v vendor)

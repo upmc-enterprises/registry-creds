@@ -512,6 +512,7 @@ func validateParams() {
 	// initialize namespace inclusions and exclusions
 	if len(*argIncludeNamespaces) > 0 && len(*argExcludeNamespaces) > 0 {
 		logrus.Errorf("Ignoring 'exclude-namespaces', as 'include-namespaces' is provided.")
+		*argExcludeNamespaces = ""
 		excludeNamespaces = []string{}
 	}
 
@@ -635,7 +636,7 @@ func validateParams() {
 }
 
 func handler(c *controller, ns *v1.Namespace) error {
-	logrus.Info("Handling namespace watch event for %s", ns.GetName())
+	logrus.Infof("Handling namespace watch event for %s", ns.GetName())
 
 	// process exclusions first, if set
 	for _, e := range excludeNamespaces {

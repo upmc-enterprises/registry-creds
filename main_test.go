@@ -377,11 +377,25 @@ func newFakeFailingACRClient() *fakeFailingACRClient {
 	return &fakeFailingACRClient{}
 }
 
-func process(t *testing.T, c *controller) {
-	namespaces, _ := c.k8sutil.Kclient.Namespaces().List(v1.ListOptions{})
-	for _, ns := range namespaces.Items {
-		err := handler(c, &ns)
-		assert.Nil(t, err)
+func process(t *testing.T, c *controller, namespaces ...string) {
+	if len(namespaces) == 0 {
+		namespaces = []string{"namespace1", "namespace2"}
+	}
+	all_nss, _ := c.k8sutil.Kclient.Namespaces().List(v1.ListOptions{})
+	for _, ns := range all_nss.Items {
+
+		ok_to_process := false
+		for _, select_ns := range namespaces {
+			if select_ns == ns.GetName() {
+				ok_to_process = true
+				break;
+			}
+		}
+
+		if ok_to_process {
+			err := handler(c, &ns)
+			assert.Nil(t, err)
+		}
 	}
 }
 
@@ -443,9 +457,13 @@ func assertAllSecretsPresent(t *testing.T, secrets []v1.LocalObjectReference) {
 	assertSecretPresent(t, secrets, *argACRSecretName)
 }
 
-func assertAllExpectedSecrets(t *testing.T, c *controller) {
+func assertAllExpectedSecrets(t *testing.T, c *controller, namespaces ...string) {
+	if len(namespaces) == 0 {
+		namespaces = []string{"namespace1", "namespace2"}
+	}
+
 	// Test GCR
-	for _, ns := range []string{"namespace1", "namespace2"} {
+	for _, ns := range namespaces {
 		secret, err := c.k8sutil.GetSecret(ns, *argGCRSecretName)
 		assert.Nil(t, err)
 		assert.Equal(t, *argGCRSecretName, secret.Name)
@@ -459,7 +477,7 @@ func assertAllExpectedSecrets(t *testing.T, c *controller) {
 	assert.NotNil(t, err)
 
 	// Test AWS
-	for _, ns := range []string{"namespace1", "namespace2"} {
+	for _, ns := range namespaces {
 		secret, err := c.k8sutil.GetSecret(ns, *argAWSSecretName)
 		assert.Nil(t, err)
 		assert.Equal(t, *argAWSSecretName, secret.Name)
@@ -471,7 +489,7 @@ func assertAllExpectedSecrets(t *testing.T, c *controller) {
 	assert.NotNil(t, err)
 
 	// Test Azure Container Registry support
-	for _, ns := range []string{"namespace1", "namespace2"} {
+	for _, ns := range namespaces {
 		secret, err := c.k8sutil.GetSecret(ns, *argACRSecretName)
 		assert.Nil(t, err)
 		assert.Equal(t, *argACRSecretName, secret.Name)
@@ -483,17 +501,19 @@ func assertAllExpectedSecrets(t *testing.T, c *controller) {
 	assert.NotNil(t, err)
 
 	// Verify that all expected secrets have been created in all namespaces
-	serviceAccount, err := c.k8sutil.GetServiceAccount("namespace1", "default")
+	for _, ns := range namespaces {
+		serviceAccount, err := c.k8sutil.GetServiceAccount(ns, "default")
 	assert.Nil(t, err)
 	assertAllSecretsPresent(t, serviceAccount.ImagePullSecrets)
-
-	serviceAccount, err = c.k8sutil.GetServiceAccount("namespace2", "default")
-	assert.Nil(t, err)
-	assertAllSecretsPresent(t, serviceAccount.ImagePullSecrets)
+	}
 }
 
-func assertExpectedSecretNumber(t *testing.T, c *controller, n int) {
-	for _, ns := range []string{"namespace1", "namespace2"} {
+func assertExpectedSecretNumber(t *testing.T, c *controller, n int, namespaces ...string) {
+	if len(namespaces) == 0 {
+		namespaces = []string{"namespace1", "namespace2"}
+}
+
+	for _, ns := range namespaces {
 		serviceAccount, err := c.k8sutil.GetServiceAccount(ns, "default")
 		assert.Nil(t, err)
 		assert.Exactly(t, n, len(serviceAccount.ImagePullSecrets))
@@ -514,7 +534,92 @@ func TestProcessOnce(t *testing.T) {
 	assertExpectedSecretNumber(t, c, 4)
 }
 
+func TestProcessOnceIncludeNamespacesBaseCase(t *testing.T) {
+	*argGCRURL = "fakeEndpoint"
+	*argIncludeNamespaces = ""
+	awsAccountIDs = []string{""}
+	c := newFakeController()
+	validateParams()
+
+	process(t, c)
+
+	assertAllExpectedSecrets(t, c)
+
+	// Verify that secrets have not been created twice
+	assertExpectedSecretNumber(t, c, 4)
+}
+
+func TestProcessOnceIncludeAllIndividualNamespaces(t *testing.T) {
+	*argGCRURL = "fakeEndpoint"
+	*argIncludeNamespaces = "namespace1,namespace2"
+	awsAccountIDs = []string{""}
+	c := newFakeController()
+	validateParams()
+
+	process(t, c)
+
+	assertAllExpectedSecrets(t, c)
+
+	// Verify that secrets have not been created twice
+	assertExpectedSecretNumber(t, c, 4)
+}
+
+func TestProcessOnceIncludeOneNamespace(t *testing.T) {
+	*argGCRURL = "fakeEndpoint"
+	*argIncludeNamespaces = "namespace1"
+	awsAccountIDs = []string{""}
+	c := newFakeController()
+	validateParams()
+
+	process(t, c, "namespace1")
+
+	assertAllExpectedSecrets(t, c, "namespace1")
+
+	// Verify that secrets have not been created twice
+	assertExpectedSecretNumber(t, c, 4, "namespace1")
+	// Verify that kube-system namespace is excluded
+	assertExpectedSecretNumber(t, c, 0, "kube-system")
+}
+
+func TestProcessWithBothInclusionAndExclusionListsForNamespaces(t *testing.T) {
+	*argGCRURL = "fakeEndpoint"
+	*argIncludeNamespaces = "namespace1,namespace2"
+	*argExcludeNamespaces = "namespace1"
+	awsAccountIDs = []string{""}
+	c := newFakeController()
+	validateParams()
+
+	process(t, c)
+
+	assertAllExpectedSecrets(t, c)
+
+	// Verify that secrets have not been created twice
+	assertExpectedSecretNumber(t, c, 4)
+}
+
+func TestProcessWithOnlyExclusionListsForNamespaces(t *testing.T) {
+	*argGCRURL = "fakeEndpoint"
+	*argIncludeNamespaces = "" // reset to all namespaces
+	*argExcludeNamespaces = "namespace1"
+	awsAccountIDs = []string{""}
+	c := newFakeController()
+	validateParams()
+
+	process(t, c)
+
+	assertAllExpectedSecrets(t, c, "namespace2")
+
+	// Verify that secrets have not been created twice
+	assertExpectedSecretNumber(t, c, 4, "namespace2")
+	// Verify no secrets exist for excluded namespace
+	assertExpectedSecretNumber(t, c, 0, "namespace1")
+	// Verify that kube-system namespace is excluded
+	assertExpectedSecretNumber(t, c, 0, "kube-system")
+}
+
 func TestProcessTwice(t *testing.T) {
+	*argIncludeNamespaces = "" // all namespaces
+	*argExcludeNamespaces = "" // exclude none
 	*argGCRURL = "fakeEndpoint"
 	c := newFakeController()
 	validateParams()
