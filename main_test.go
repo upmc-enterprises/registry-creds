@@ -377,25 +377,11 @@ func newFakeFailingACRClient() *fakeFailingACRClient {
 	return &fakeFailingACRClient{}
 }
 
-func process(t *testing.T, c *controller, namespaces ...string) {
-	if len(namespaces) == 0 {
-		namespaces = []string{"namespace1", "namespace2"}
-	}
+func process(t *testing.T, c *controller) {
 	all_nss, _ := c.k8sutil.Kclient.Namespaces().List(v1.ListOptions{})
 	for _, ns := range all_nss.Items {
-
-		ok_to_process := false
-		for _, select_ns := range namespaces {
-			if select_ns == ns.GetName() {
-				ok_to_process = true
-				break;
-			}
-		}
-
-		if ok_to_process {
-			err := handler(c, &ns)
-			assert.Nil(t, err)
-		}
+		err := handler(c, &ns)
+		assert.Nil(t, err)
 	}
 }
 
@@ -571,7 +557,7 @@ func TestProcessOnceIncludeOneNamespace(t *testing.T) {
 	c := newFakeController()
 	validateParams()
 
-	process(t, c, "namespace1")
+	process(t, c)
 
 	assertAllExpectedSecrets(t, c, "namespace1")
 
