@@ -1,0 +1,1 @@
+You can now use your secured images without the explicit need of service accounts
