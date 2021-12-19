@@ -22,6 +22,8 @@ serviceAccount:
 
 podAnnotations: {}
 
+podEnvironmentVars: {}
+
 aws: {}
   #AWS_ACCESS_KEY_ID: changeme
   #AWS_SECRET_ACCESS_KEY: changeme
@@ -40,9 +42,11 @@ acr: {}
   #ACR_CLIENT_ID: changeme
   #ACR_PASSWORD: changeme
 
-gcr: {}
-  #credentials: changeme
-  #gcrurl: https://gcr.io
+gcr:
+  credentials: changeme
+  gcrurl: https://gcr.io
+  userHomeDir: / #This dir corelates with the selected user in podSecurityContext.
+    #When changing user in the podSecurityContext you need to change this path
 
 
 podSecurityContext:
@@ -50,14 +54,13 @@ podSecurityContext:
   runAsUser: 65534
   runAsGroup: 65534
 
-
 securityContext:
   capabilities:
     drop:
     - ALL
   readOnlyRootFilesystem: true
   runAsNonRoot: true
-  runAsUser: 1000
+  runAsUser: 65534
 
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious

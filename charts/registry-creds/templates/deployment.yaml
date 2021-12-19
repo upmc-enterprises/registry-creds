@@ -35,8 +35,14 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "registry-creds.fullname" . }}
+            - configMapRef:
+                name: {{ include "registry-creds.fullname" . }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: gcr-creds
+              mountPath: "{{ .Values.gcr.userHomeDir }}.config/gcloud"
+              readOnly: true
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -49,3 +55,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      volumes:
+        - name: gcr-creds
+          secret:
+            secretName: {{ include "registry-creds.fullname" . }}

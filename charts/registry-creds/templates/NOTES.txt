@@ -1,1 +1,17 @@
-You can now use your secured images without the explicit need of service accounts
+You can now efforthlessly pull container images from different private registries.
+
+Note: This tool modifies the "default" service account in each namespace. In addition, in each namespace it creates following secrets - acr-secret, awsecr-cred, dpr-secret and gcr-secret. Modifications to the default service account in each namespace look like
+```
+imagePullSecrets:
+- name: gcr-secret
+- name: awsecr-cred
+- name: dpr-secret
+- name: acr-secret
+```
+
+To check the logs of this tool you cna use the follwoing command
+```
+kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name=registry-creds -f
+```
+
+To update this tool, please, always add --reset-values in your `helm update` command
