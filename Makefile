@@ -28,6 +28,8 @@ all: container
 .PHONY: build
 build: main.go
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -a -installsuffix cgo -o $(BIN) --ldflags '-w' $<
+# GOOS=darwin GOARCH=arm64 
+# CGO_ENABLED=0 go build -a -installsuffix cgo -o $(BIN) --ldflags '-w' $<
 
 .PHONY: container
 container: build

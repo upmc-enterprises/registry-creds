@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    iam.amazonaws.com/role: arn:aws:iam::785062301879:role/k8s_ecr_ro
+  labels:
+    app.kubernetes.io/instance: registry-creds
+    app.kubernetes.io/name: registry-creds
+  name: registry-creds-new
+  namespace: kube-system
+spec:
+  containers:
+  - env:
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          key: AWS_ACCESS_KEY_ID
+          name: registry-creds-ecr
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          key: AWS_SECRET_ACCESS_KEY
+          name: registry-creds-ecr
+    - name: awsaccount
+      valueFrom:
+        secretKeyRef:
+          key: aws-account
+          name: registry-creds-ecr
+    - name: awsregion
+      valueFrom:
+        secretKeyRef:
+          key: aws-region
+          name: registry-creds-ecr
+    - name: DOCKER_PRIVATE_REGISTRY_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          key: DOCKER_PRIVATE_REGISTRY_PASSWORD
+          name: registry-creds-dpr
+    - name: DOCKER_PRIVATE_REGISTRY_SERVER
+      valueFrom:
+        secretKeyRef:
+          key: DOCKER_PRIVATE_REGISTRY_SERVER
+          name: registry-creds-dpr
+    - name: DOCKER_PRIVATE_REGISTRY_USER
+      valueFrom:
+        secretKeyRef:
+          key: DOCKER_PRIVATE_REGISTRY_USER
+          name: registry-creds-dpr
+# image          
+    image: upmcenterprises/registry-creds:1.10
+    imagePullPolicy: IfNotPresent
+    name: registry-creds
+    resources:
+      limits:
+        cpu: 100m
+        memory: 96Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+    volumeMounts:
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-qksq2
+      readOnly: true
+  nodeSelector:
+    group-name: worker-group-infra
+  serviceAccount: registry-creds
+  serviceAccountName: registry-creds
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/infralayer
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  volumes:
+  - name: kube-api-access-qksq2
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
