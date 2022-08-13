@@ -84,7 +84,7 @@ var (
 	argACRURL                = flags.String("acr-url", "", "Azure Container Registry URL")
 	argACRClientID           = flags.String("acr-client-id", "", "Azure Container Registry client ID (user name)")
 	argACRPassword           = flags.String("acr-password", "", "Azure Container Registry password (client secret)")
-	argRefreshMinutes        = flags.Int("refresh-mins", 2, `Default time to wait before refreshing (60 minutes)`)
+	argRefreshMinutes        = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
 	argSkipKubeSystem        = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
 	argAWSAssumeRole         = flags.String("aws_assume_role", "", `If specified AWS will assume this role and use it to retrieve tokens`)
 	argTokenGenFxnRetryType  = flags.String("token-retry-type", defaultTokenGenRetryType, `The type of retry timer to use when generating a secret token; either simple or exponential (simple)`)
