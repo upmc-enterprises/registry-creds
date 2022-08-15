@@ -1,5 +1,5 @@
 # Start by building the application.
-FROM golang:1.18 as build
+FROM golang:1.19 as build
 
 WORKDIR /go/src/app
 
@@ -11,10 +11,8 @@ RUN go get -d -v ./...
 RUN go test
 RUN GOOS=linux GOARCH=amd64 go build -v -ldflags="-w -s" -o /go/bin/app/registry-creds
 
-FROM alpine:3
-
-RUN apk add --update ca-certificates && \
-    rm -rf /var/cache/apk/*
+# Now copy it into our base image.
+FROM gcr.io/distroless/base
 
 COPY --from=build /go/bin/app/registry-creds /
-CMD ["/registry-creds"]
+ENTRYPOINT ["/registry-creds"]
