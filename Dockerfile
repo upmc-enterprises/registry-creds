@@ -11,7 +11,10 @@ RUN go get -d -v ./...
 RUN go test
 RUN GOOS=linux GOARCH=amd64 go build -v -ldflags="-w -s" -o /go/bin/app/registry-creds
 
-# Now copy it into our base image.
-FROM gcr.io/distroless/base
+FROM alpine:3
+
+RUN apk add --update ca-certificates && \
+    rm -rf /var/cache/apk/*
+
 COPY --from=build /go/bin/app/registry-creds /
 CMD ["/registry-creds"]
