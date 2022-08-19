@@ -19,11 +19,13 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        # See: https://github.com/actions/checkout
+        fetch-depth: 0
 
     - name: fetch git tags
       id: gitfetch
       run: |
-        git fetch -a
         tag=$(git describe --tags --always)
         echo "::set-output name=tag::${tag}"
         echo "${tag}"
