@@ -1,4 +1,12 @@
-[![Build Status](https://ci.doddle.com/api/badges/doddle/registry-creds/status.svg?ref=refs/heads/master)](https://ci.doddle.com/doddle/registry-creds)
+> NOTE: this is a fork of [upmc-enterprises/registry-creds](https://github.com/upmc-enterprises/registry-creds/network/members)
+
+These are the only changes made to the codebase currently:
+- reduced the support down to AWS ECR only
+- don't attempt to handle errors, simply exit so k8s can restart it
+- github action to publish a public docker image
+
+
+---
 
 # Registry Credentials
 

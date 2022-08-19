@@ -2,6 +2,7 @@ package k8sutil
 
 import (
 	"log"
+	"os"
 	"time"
 
 	"github.com/Sirupsen/logrus"
@@ -161,11 +162,13 @@ func (k *K8sutilInterface) WatchNamespaces(resyncPeriod time.Duration, handler f
 			AddFunc: func(obj interface{}) {
 				if err := handler(obj.(*v1.Namespace)); err != nil {
 					log.Println(err)
+					os.Exit(1)
 				}
 			},
 			UpdateFunc: func(_ interface{}, obj interface{}) {
 				if err := handler(obj.(*v1.Namespace)); err != nil {
 					log.Println(err)
+					os.Exit(1)
 				}
 			},
 		},
