@@ -22,11 +22,10 @@ jobs:
 
     - name: fetch git tags
       id: gitfetch
-      run: git fetch --filter=tree:0 origin +refs/tags/*:refs/tags/* +refs/heads/*:refs/remotes/origin/*
-
-    - name: Get git tag
-      id: gittags
-      run: echo  "::set-output name=tag::$(git describe --tags HEAD)"
+      run: |
+        git fetch -a
+        latest_tag=$(git describe --tags `git rev-list --tags --max-count=1`)
+        echo "::set-output name=tag::${latest_tag}"
 
     - name: Log in to the Container registry
       uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
