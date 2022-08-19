@@ -24,7 +24,7 @@ jobs:
       id: gitfetch
       run: |
         git fetch -a
-        tag=$(git describe --tags `git rev-list --tags --max-count=1`)
+        tag=$(git describe --tags --always)
         echo "::set-output name=tag::${tag}"
         echo "${tag}"
 
