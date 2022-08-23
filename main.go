@@ -59,8 +59,7 @@ const (
 
 var (
 	flags                    = flag.NewFlagSet("", flag.ContinueOnError)
-	argKubecfgFile           = flags.String("kubecfg-file", "", `Location of kubecfg file for access to kubernetes master service; --kube_master_url overrides the URL part of this; if neither this nor --kube_master_url are provided, defaults to service account tokens`)
-	argKubeMasterURL         = flags.String("kube-master-url", "", `URL to reach kubernetes master. Env variables in this flag will be expanded.`)
+	argExcludedNamespaces    = flags.String("excluded-namespaces", "", `Comma seperated list of namespaces that do NOT need updated secrets`)
 	argAWSSecretName         = flags.String("aws-secret-name", "awsecr-cred", `Default AWS secret name`)
 	argAWSRegion             = flags.String("aws-region", "us-east-1", `Default AWS region`)
 	argRefreshMinutes        = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
@@ -270,7 +269,7 @@ func (c *controller) generateSecrets() []*v1.Secret {
 	maxTries := RetryCfg.NumberOfRetries + 1
 	for _, secretGenerator := range secretGenerators {
 		resetRetryTimer()
-		logrus.Infof("------------------ [%s] ------------------\n", secretGenerator.SecretName)
+		//logrus.Infof("------------------ [%s] ------------------\n", secretGenerator.SecretName)
 
 		var newTokens []AuthToken
 		tries := 0
@@ -424,26 +423,43 @@ func validateParams() {
 	}
 }
 
-func handler(c *controller, ns *v1.Namespace) error {
-	logrus.Infof("Refreshing credentials for namespace %s", ns.GetName())
-	secrets := c.generateSecrets()
-	logrus.Infof("Got %d refreshed credentials for namespace %s", len(secrets), ns.GetName())
-	for _, secret := range secrets {
-		if *argSkipKubeSystem && ns.GetName() == "kube-system" {
-			continue
+func stringSliceContains(stringSlice []string, searchString string) bool {
+	// simple check to see if a slice of strings has one matching the input string
+	for _, v := range stringSlice {
+		if v == searchString {
+			return true
 		}
-
-		logrus.Infof("Processing secret for namespace %s, secret %s", ns.Name, secret.Name)
-
-		if err := c.processNamespace(ns, secret); err != nil {
-			logrus.Errorf("error processing secret for namespace %s, secret %s: %s", ns.Name, secret.Name, err)
-			return err
-		}
-
-		logrus.Infof("Finished processing secret for namespace %s, secret %s", ns.Name, secret.Name)
 	}
-	logrus.Infof("Finished refreshing credentials for namespace %s", ns.GetName())
-	return nil
+	return false
+}
+
+func handler(c *controller, ns *v1.Namespace) error {
+	//fmt.Println(c.k8sutil.ExcludedNamespaces)
+	namespace := ns.GetName()
+	if stringSliceContains(c.k8sutil.ExcludedNamespaces, namespace) {
+		logrus.Infof("---------- handler( namespace: %s excluded)", namespace)
+		return nil
+	} else {
+		logrus.Infof("---------- handler( namespace: %s started)", namespace)
+		logrus.Infof("generating credentials for namespace %s", namespace)
+		secrets := c.generateSecrets()
+		logrus.Infof("Got %d refreshed credentials for namespace %s", len(secrets), namespace)
+		for _, secret := range secrets {
+			if *argSkipKubeSystem && namespace == "kube-system" {
+				continue
+			}
+			logrus.Infof("Processing secret for namespace %s, secret %s", ns.Name, secret.Name)
+
+			if err := c.processNamespace(ns, secret); err != nil {
+				logrus.Errorf("error processing secret for namespace %s, secret %s: %s", ns.Name, secret.Name, err)
+				return err
+			}
+
+			logrus.Infof("Finished processing secret for namespace %s, secret %s", ns.Name, secret.Name)
+		}
+		logrus.Infof("Finished refreshing credentials for namespace %s", ns.GetName())
+		return nil
+	}
 }
 
 func main() {
@@ -463,8 +479,8 @@ func main() {
 	logrus.Info("Token Generation Retries: ", RetryCfg.NumberOfRetries)
 	logrus.Info("Token Generation Retry Delay (seconds): ", RetryCfg.RetryDelayInSeconds)
 
-	util, err := k8sutil.New(*argKubecfgFile, *argKubeMasterURL)
-
+	excludedNamespaces := strings.Split(*argExcludedNamespaces, ",")
+	util, err := k8sutil.New(excludedNamespaces)
 	if err != nil {
 		logrus.Error("Could not create k8s client!!", err)
 	}
