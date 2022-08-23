@@ -1,11 +1,8 @@
 package k8sutil
 
 import (
-	"fmt"
-	"k8s.io/client-go/pkg/util/homedir"
 	"log"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/Sirupsen/logrus"
@@ -27,56 +24,35 @@ type KubeInterface interface {
 }
 
 type K8sutilInterface struct {
-	Kclient            KubeInterface
-	MasterHost         string
-	ExcludedNamespaces []string
+	Kclient    KubeInterface
+	MasterHost string
 }
 
 // New creates a new instance of k8sutil
-func New(excludedNamespaces []string) (*K8sutilInterface, error) {
+func New(kubeCfgFile, masterHost string) (*K8sutilInterface, error) {
 
-	client, err := newKubeClient()
+	client, err := newKubeClient(kubeCfgFile)
 
 	if err != nil {
 		logrus.Fatalf("Could not init Kubernetes client! [%s]", err)
 	}
 
 	k := &K8sutilInterface{
-		Kclient:            client,
-		ExcludedNamespaces: excludedNamespaces,
+		Kclient:    client,
+		MasterHost: masterHost,
 	}
 
 	return k, nil
 }
 
-func envVarExists(key string) bool {
-	_, exists := os.LookupEnv(key)
-	return exists
-}
-
-// does a best guess to the location of your kubeconfig
-func findKubeConfig() string {
-	home := homedir.HomeDir()
-	if envVarExists("KUBECONFIG") {
-		kubeconfig := os.Getenv("KUBECONFIG")
-		return kubeconfig
-	}
-	kubeconfig := fmt.Sprint(filepath.Join(home, ".kube", "config"))
-	return kubeconfig
-}
-
-func newKubeClient() (KubeInterface, error) {
+func newKubeClient(kubeCfgFile string) (KubeInterface, error) {
 
 	var client *kubernetes.Clientset
 
-	// we will automatically decide if this is running inside the cluster or on someones laptop
-	// if the ENV vars KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT exist
-	// then we can assume this app is running inside a k8s cluster
-	if envVarExists("KUBERNETES_SERVICE_HOST") && envVarExists("KUBERNETES_SERVICE_PORT") {
+	// Should we use in cluster or out of cluster config
+	if len(kubeCfgFile) == 0 {
 		logrus.Info("Using InCluster k8s config")
 		cfg, err := rest.InClusterConfig()
-
-		//cfg, err := rest.InClusterConfig()
 
 		if err != nil {
 			return nil, err
@@ -88,9 +64,8 @@ func newKubeClient() (KubeInterface, error) {
 			return nil, err
 		}
 	} else {
-		logrus.Infof("using KUBECONFIG to determine your kubernetes connection")
-
-		cfg, err := clientcmd.BuildConfigFromFlags("", findKubeConfig())
+		logrus.Infof("Using OutOfCluster k8s config with kubeConfigFile: %s", kubeCfgFile)
+		cfg, err := clientcmd.BuildConfigFromFlags("", kubeCfgFile)
 
 		if err != nil {
 			logrus.Error("Got error trying to create client: ", err)

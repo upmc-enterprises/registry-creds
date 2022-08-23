@@ -59,12 +59,13 @@ const (
 
 var (
 	flags                    = flag.NewFlagSet("", flag.ContinueOnError)
+	argKubecfgFile           = flags.String("kubecfg-file", "", `Location of kubecfg file for access to kubernetes master service; --kube_master_url overrides the URL part of this; if neither this nor --kube_master_url are provided, defaults to service account tokens`)
+	argKubeMasterURL         = flags.String("kube-master-url", "", `URL to reach kubernetes master. Env variables in this flag will be expanded.`)
 	argAWSSecretName         = flags.String("aws-secret-name", "awsecr-cred", `Default AWS secret name`)
 	argAWSRegion             = flags.String("aws-region", "us-east-1", `Default AWS region`)
 	argRefreshMinutes        = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
 	argSkipKubeSystem        = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
 	argAWSAssumeRole         = flags.String("aws_assume_role", "", `If specified AWS will assume this role and use it to retrieve tokens`)
-	argExcludedNamespaces    = flags.String("ignored-namespaces", "", `Comma seperated list of namespaces that do NOT need updated secrets`)
 	argTokenGenFxnRetryType  = flags.String("token-retry-type", defaultTokenGenRetryType, `The type of retry timer to use when generating a secret token; either simple or exponential (simple)`)
 	argTokenGenFxnRetries    = flags.Int("token-retries", defaultTokenGenRetries, `Default number of times to retry generating a secret token (3)`)
 	argTokenGenFxnRetryDelay = flags.Int("token-retry-delay", defaultTokenGenRetryDelay, `Default number of seconds to wait before retrying secret token generation (5 seconds)`)
@@ -448,7 +449,6 @@ func handler(c *controller, ns *v1.Namespace) error {
 func main() {
 	logrus.Info("Starting up...")
 	err := flags.Parse(os.Args)
-	excludedNamespaces := strings.Split(*argExcludedNamespaces, ",")
 	if err != nil {
 		logrus.Fatalf("Could not parse command line arguments! [Err: %s]", err)
 	}
@@ -463,7 +463,7 @@ func main() {
 	logrus.Info("Token Generation Retries: ", RetryCfg.NumberOfRetries)
 	logrus.Info("Token Generation Retry Delay (seconds): ", RetryCfg.RetryDelayInSeconds)
 
-	util, err := k8sutil.New(excludedNamespaces)
+	util, err := k8sutil.New(*argKubecfgFile, *argKubeMasterURL)
 
 	if err != nil {
 		logrus.Error("Could not create k8s client!!", err)
