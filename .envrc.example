@@ -1,0 +1,14 @@
+#
+# You will need the following 4 env vars for this to work..
+# please don't forget to update them
+
+# I suggest copying this file, editing it and then loading it.. EG:
+
+# cp .envrc.example .envrc"
+# vim .envrc
+# direnv allow
+
+export AWS_ACCESS_KEY_ID=AKIAJASLKDJASDHJKASDHJ
+export AWS_SECRET_ACCESS_KEY=asdasdasdasdasdasdasdasdasdasdasdasd
+export awsaccount=929292929292
+export awsregion=eu-west-2
