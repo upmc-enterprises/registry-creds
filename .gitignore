@@ -1,2 +1,3 @@
 registry-creds
-.vscode/
+.vscode/.envrc
+.envrc
