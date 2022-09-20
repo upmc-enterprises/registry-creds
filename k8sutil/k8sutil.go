@@ -4,11 +4,13 @@ import (
 	"log"
 	"time"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/kubernetes"
 	coreType "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/fields"
+
+	//"k8s.io/client-go/pkg/fields"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
@@ -154,7 +156,7 @@ func (k *K8sutilInterface) UpdateServiceAccount(namespace string, sa *v1.Service
 func (k *K8sutilInterface) WatchNamespaces(resyncPeriod time.Duration, handler func(*v1.Namespace) error) {
 	stopC := make(chan struct{})
 	_, c := cache.NewInformer(
-		cache.NewListWatchFromClient(k.Kclient.Core().RESTClient(), "namespaces", v1.NamespaceAll, fields.Everything()),
+		cache.NewListWatchFromClient(k.Kclient.Core().RESTClient(), "namespaces", v1.NamespaceAll, labels.Everything()),
 		&v1.Namespace{},
 		resyncPeriod,
 		cache.ResourceEventHandlerFuncs{
