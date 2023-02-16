@@ -2,7 +2,7 @@
 # MAINTAINER: Steve Sloka <steve@stevesloka.com>
 # If you update this image please bump the tag value before pushing.
 
-TAG = 1.10
+TAG = 1.11
 PREFIX = upmcenterprises
 
 BIN = registry-creds
