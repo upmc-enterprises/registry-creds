@@ -448,6 +448,14 @@ func handler(c *controller, ns *v1.Namespace) error {
 }
 
 func main() {
+	go startRefreshCredentialTask()
+
+	// wait 1 hour
+	time.Sleep(time.Hour)
+	fmt.Println("registry-creds is shutting down")
+}
+
+func startRefreshCredentialTask() {
 	logrus.Info("Starting up...")
 	err := flags.Parse(os.Args)
 	if err != nil {
