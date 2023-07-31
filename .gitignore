@@ -1,2 +1,4 @@
 registry-creds
 .vscode/
+.idea/
+*.iml
