@@ -40,9 +40,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/cenkalti/backoff"
 	flag "github.com/spf13/pflag"
-	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	v1 "k8s.io/client-go/pkg/api/v1"
 
 	"github.com/upmc-enterprises/registry-creds/k8sutil"
@@ -71,8 +68,6 @@ var (
 	argKubeMasterURL         = flags.String("kube-master-url", "", `URL to reach kubernetes master. Env variables in this flag will be expanded.`)
 	argAWSSecretName         = flags.String("aws-secret-name", "awsecr-cred", `Default AWS secret name`)
 	argDPRSecretName         = flags.String("dpr-secret-name", "dpr-secret", `Default Docker Private Registry secret name`)
-	argGCRSecretName         = flags.String("gcr-secret-name", "gcr-secret", `Default GCR secret name`)
-	argGCRURL                = flags.String("gcr-url", "https://gcr.io", `Default GCR URL`)
 	argAWSRegion             = flags.String("aws-region", "us-east-1", `Default AWS region`)
 	argDPRPassword           = flags.String("dpr-password", "", "Docker Private Registry password")
 	argDPRServer             = flags.String("dpr-server", "", "Docker Private Registry server")
@@ -108,7 +103,6 @@ type registryAuth struct {
 type controller struct {
 	k8sutil   *k8sutil.K8sutilInterface
 	ecrClient ecrInterface
-	gcrClient gcrInterface
 	dprClient dprInterface
 }
 
@@ -126,10 +120,6 @@ type dprInterface interface {
 
 type ecrInterface interface {
 	GetAuthorizationToken(input *ecr.GetAuthorizationTokenInput) (*ecr.GetAuthorizationTokenOutput, error)
-}
-
-type gcrInterface interface {
-	DefaultTokenSource(ctx context.Context, scope ...string) (oauth2.TokenSource, error)
 }
 
 func newEcrClient() ecrInterface {
@@ -168,44 +158,9 @@ func newDprClient() dprInterface {
 	return dprClient{}
 }
 
-type gcrClient struct{}
-
-func (gcr gcrClient) DefaultTokenSource(ctx context.Context, scope ...string) (oauth2.TokenSource, error) {
-	return google.DefaultTokenSource(ctx, scope...)
-}
-
-func newGcrClient() gcrInterface {
-	return gcrClient{}
-}
-
 func (c *controller) getDPRToken() ([]AuthToken, error) {
 	token, err := c.dprClient.getAuthToken(*argDPRServer, *argDPRUser, *argDPRPassword)
 	return []AuthToken{token}, err
-}
-
-func (c *controller) getGCRAuthorizationKey() ([]AuthToken, error) {
-	ts, err := c.gcrClient.DefaultTokenSource(context.TODO(), "https://www.googleapis.com/auth/cloud-platform")
-	if err != nil {
-		return []AuthToken{}, err
-	}
-
-	token, err := ts.Token()
-	if err != nil {
-		return []AuthToken{}, err
-	}
-
-	if !token.Valid() {
-		return []AuthToken{}, fmt.Errorf("token was invalid")
-	}
-
-	if token.Type() != "Bearer" {
-		return []AuthToken{}, fmt.Errorf(fmt.Sprintf("expected token type \"Bearer\" but got \"%s\"", token.Type()))
-	}
-
-	tokens := make([]AuthToken, 0)
-	tokens = append(tokens, AuthToken{token.AccessToken, *argGCRURL})
-
-	return tokens, nil
 }
 
 func (c *controller) getECRAuthorizationKey() ([]AuthToken, error) {
@@ -286,12 +241,6 @@ type SecretGenerator struct {
 
 func getSecretGenerators(c *controller) []SecretGenerator {
 	secretGenerators := make([]SecretGenerator, 0)
-
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getGCRAuthorizationKey,
-		IsJSONCfg:   false,
-		SecretName:  *argGCRSecretName,
-	})
 
 	secretGenerators = append(secretGenerators, SecretGenerator{
 		TokenGenFxn: c.getECRAuthorizationKey,
@@ -452,7 +401,6 @@ func validateParams() {
 	dprPassword := os.Getenv(dockerPrivateRegistryPasswordKey)
 	dprServer := os.Getenv(dockerPrivateRegistryServerKey)
 	dprUser := os.Getenv(dockerPrivateRegistryUserKey)
-	gcrURLEnv := os.Getenv("gcrurl")
 
 	// initialize the retry configuration using command line values
 	RetryCfg = RetryConfig{
@@ -536,10 +484,6 @@ func validateParams() {
 		argDPRUser = &dprUser
 	}
 
-	if len(gcrURLEnv) > 0 {
-		argGCRURL = &gcrURLEnv
-	}
-
 	if len(argAWSAssumeRoleEnv) > 0 {
 		argAWSAssumeRole = &argAWSAssumeRoleEnv
 	}
@@ -591,9 +535,8 @@ func main() {
 	}
 
 	ecrClient := newEcrClient()
-	gcrClient := newGcrClient()
 	dprClient := newDprClient()
-	c := &controller{util, ecrClient, gcrClient, dprClient}
+	c := &controller{util, ecrClient, dprClient}
 
 	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *v1.Namespace) error {
 		return handler(c, ns)
