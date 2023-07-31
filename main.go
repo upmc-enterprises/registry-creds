@@ -25,7 +25,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -50,16 +49,13 @@ const (
 	retryTypeSimple      = "simple"
 	retryTypeExponential = "exponential"
 
-	dockerCfgTemplate                = `{"%s":{"username":"oauth2accesstoken","password":"%s","email":"none"}}`
-	dockerPrivateRegistryPasswordKey = "DOCKER_PRIVATE_REGISTRY_PASSWORD"
-	dockerPrivateRegistryServerKey   = "DOCKER_PRIVATE_REGISTRY_SERVER"
-	dockerPrivateRegistryUserKey     = "DOCKER_PRIVATE_REGISTRY_USER"
-	tokenGenRetryTypeKey             = "TOKEN_RETRY_TYPE"
-	tokenGenRetriesKey               = "TOKEN_RETRIES"
-	tokenGenRetryDelayKey            = "TOKEN_RETRY_DELAY"
-	defaultTokenGenRetries           = 3
-	defaultTokenGenRetryDelay        = 5 // in seconds
-	defaultTokenGenRetryType         = retryTypeSimple
+	dockerCfgTemplate         = `{"%s":{"username":"oauth2accesstoken","password":"%s","email":"none"}}`
+	tokenGenRetryTypeKey      = "TOKEN_RETRY_TYPE"
+	tokenGenRetriesKey        = "TOKEN_RETRIES"
+	tokenGenRetryDelayKey     = "TOKEN_RETRY_DELAY"
+	defaultTokenGenRetries    = 3
+	defaultTokenGenRetryDelay = 5 // in seconds
+	defaultTokenGenRetryType  = retryTypeSimple
 )
 
 var (
@@ -67,11 +63,7 @@ var (
 	argKubecfgFile           = flags.String("kubecfg-file", "", `Location of kubecfg file for access to kubernetes master service; --kube_master_url overrides the URL part of this; if neither this nor --kube_master_url are provided, defaults to service account tokens`)
 	argKubeMasterURL         = flags.String("kube-master-url", "", `URL to reach kubernetes master. Env variables in this flag will be expanded.`)
 	argAWSSecretName         = flags.String("aws-secret-name", "awsecr-cred", `Default AWS secret name`)
-	argDPRSecretName         = flags.String("dpr-secret-name", "dpr-secret", `Default Docker Private Registry secret name`)
 	argAWSRegion             = flags.String("aws-region", "us-east-1", `Default AWS region`)
-	argDPRPassword           = flags.String("dpr-password", "", "Docker Private Registry password")
-	argDPRServer             = flags.String("dpr-server", "", "Docker Private Registry server")
-	argDPRUser               = flags.String("dpr-user", "", "Docker Private Registry user")
 	argRefreshMinutes        = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
 	argSkipKubeSystem        = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
 	argAWSAssumeRole         = flags.String("aws_assume_role", "", `If specified AWS will assume this role and use it to retrieve tokens`)
@@ -103,7 +95,6 @@ type registryAuth struct {
 type controller struct {
 	k8sutil   *k8sutil.K8sutilInterface
 	ecrClient ecrInterface
-	dprClient dprInterface
 }
 
 // RetryConfig represents the number of retries + the retry delay for retrying an operation if it should fail
@@ -111,11 +102,6 @@ type RetryConfig struct {
 	Type                string
 	NumberOfRetries     int
 	RetryDelayInSeconds int
-}
-
-// Docker Private Registry interface
-type dprInterface interface {
-	getAuthToken(server, user, password string) (AuthToken, error)
 }
 
 type ecrInterface interface {
@@ -132,35 +118,6 @@ func newEcrClient() ecrInterface {
 	}
 
 	return ecr.New(sess, awsConfig)
-}
-
-type dprClient struct{}
-
-func (dpr dprClient) getAuthToken(server, user, password string) (AuthToken, error) {
-	if server == "" {
-		return AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryServerKey))
-	}
-
-	if user == "" {
-		return AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryUserKey))
-	}
-
-	if password == "" {
-		return AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryPasswordKey))
-	}
-
-	token := base64.StdEncoding.EncodeToString([]byte(strings.Join([]string{user, password}, ":")))
-
-	return AuthToken{AccessToken: token, Endpoint: server}, nil
-}
-
-func newDprClient() dprInterface {
-	return dprClient{}
-}
-
-func (c *controller) getDPRToken() ([]AuthToken, error) {
-	token, err := c.dprClient.getAuthToken(*argDPRServer, *argDPRUser, *argDPRPassword)
-	return []AuthToken{token}, err
 }
 
 func (c *controller) getECRAuthorizationKey() ([]AuthToken, error) {
@@ -246,12 +203,6 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 		TokenGenFxn: c.getECRAuthorizationKey,
 		IsJSONCfg:   true,
 		SecretName:  *argAWSSecretName,
-	})
-
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getDPRToken,
-		IsJSONCfg:   true,
-		SecretName:  *argDPRSecretName,
 	})
 
 	return secretGenerators
@@ -398,9 +349,6 @@ func validateParams() {
 	awsAccountIDEnv := os.Getenv("awsaccount")
 	awsRegionEnv := os.Getenv("awsregion")
 	argAWSAssumeRoleEnv := os.Getenv("aws_assume_role")
-	dprPassword := os.Getenv(dockerPrivateRegistryPasswordKey)
-	dprServer := os.Getenv(dockerPrivateRegistryServerKey)
-	dprUser := os.Getenv(dockerPrivateRegistryUserKey)
 
 	// initialize the retry configuration using command line values
 	RetryCfg = RetryConfig{
@@ -472,18 +420,6 @@ func validateParams() {
 		awsAccountIDs = []string{""}
 	}
 
-	if len(dprPassword) > 0 {
-		argDPRPassword = &dprPassword
-	}
-
-	if len(dprServer) > 0 {
-		argDPRServer = &dprServer
-	}
-
-	if len(dprUser) > 0 {
-		argDPRUser = &dprUser
-	}
-
 	if len(argAWSAssumeRoleEnv) > 0 {
 		argAWSAssumeRole = &argAWSAssumeRoleEnv
 	}
@@ -535,8 +471,7 @@ func main() {
 	}
 
 	ecrClient := newEcrClient()
-	dprClient := newDprClient()
-	c := &controller{util, ecrClient, dprClient}
+	c := &controller{util, ecrClient}
 
 	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *v1.Namespace) error {
 		return handler(c, ns)
