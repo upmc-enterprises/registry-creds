@@ -90,6 +90,7 @@ var (
 	argTokenGenFxnRetryType  = flags.String("token-retry-type", defaultTokenGenRetryType, `The type of retry timer to use when generating a secret token; either simple or exponential (simple)`)
 	argTokenGenFxnRetries    = flags.Int("token-retries", defaultTokenGenRetries, `Default number of times to retry generating a secret token (3)`)
 	argTokenGenFxnRetryDelay = flags.Int("token-retry-delay", defaultTokenGenRetryDelay, `Default number of seconds to wait before retrying secret token generation (5 seconds)`)
+  argServiceAccount        = flags.String("service-account", "registry-creds", "ServiceAccount to use, defaults to 'registry-creds'")
 )
 
 var (
@@ -380,9 +381,9 @@ func (c *controller) processNamespace(namespace *corev1.Namespace, secret *corev
 	}
 
 	// Check if ServiceAccount exists
-	serviceAccount, err := c.k8sutil.GetServiceAccount(namespace.GetName(), "default")
+	serviceAccount, err := c.k8sutil.GetServiceAccount(namespace.GetName(), *argServiceAccount)
 	if err != nil {
-		log.Errorf("error getting service account default in namespace %s: %s", namespace.GetName(), err)
+		log.Errorf("error getting service account '%s' in namespace %s: %s", argServiceAccount, namespace.GetName(), err)
 		return fmt.Errorf("could not get ServiceAccounts: %v", err)
 	}
 
