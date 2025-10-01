@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-creds
+spec:
+  template:
+    spec:
+      containers:
+      - image: ghcr.io/manifest-cyber/registry-creds
+        name: registry-creds
+        imagePullPolicy: IfNotPresent
+        envFrom:
+          - secretKeyRef:
+              name: registry-creds-dpr
+              optional: true
+          - secretKeyRef:
+              name: registry-creds-ecr
+              optional: true
+          - secretKeyRef:
+              name: registry-creds-gcr
+              optional: true
+          - secretKeyRef:
+              name: registry-creds-acr
+              optional: true
+        volumeMounts:
+        - name: gcr-creds
+          mountPath: "/root/.config/gcloud"
+          readOnly: true
+      volumes:
+      - name: gcr-creds
+        secret:
+          secretName: registry-creds-gcr
+          optional: true
