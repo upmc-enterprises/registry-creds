@@ -33,18 +33,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/cenkalti/backoff"
 	flag "github.com/spf13/pflag"
-	"github.com/upmc-enterprises/registry-creds/k8sutil"
+	"github.com/manifest-cyber/registry-creds/k8sutil"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	v1 "k8s.io/client-go/pkg/api/v1"
+	corev1 "k8s.io/api/core/v1"
+  metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -159,15 +160,15 @@ type dprClient struct{}
 
 func (dpr dprClient) getAuthToken(server, user, password string) (AuthToken, error) {
 	if server == "" {
-		return AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryServerKey))
+		return AuthToken{}, fmt.Errorf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryServerKey)
 	}
 
 	if user == "" {
-		return AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryUserKey))
+		return AuthToken{}, fmt.Errorf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryUserKey)
 	}
 
 	if password == "" {
-		return AuthToken{}, fmt.Errorf(fmt.Sprintf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryPasswordKey))
+		return AuthToken{}, fmt.Errorf("Failed to get auth token for docker private registry: empty value for %s", dockerPrivateRegistryPasswordKey)
 	}
 
 	token := base64.StdEncoding.EncodeToString([]byte(strings.Join([]string{user, password}, ":")))
@@ -210,7 +211,7 @@ func (c *controller) getGCRAuthorizationKey() ([]AuthToken, error) {
 	}
 
 	if token.Type() != "Bearer" {
-		return []AuthToken{}, fmt.Errorf(fmt.Sprintf("expected token type \"Bearer\" but got \"%s\"", token.Type()))
+		return []AuthToken{}, fmt.Errorf("expected token type \"Bearer\" but got \"%s\"", token.Type())
 	}
 
 	tokens := make([]AuthToken, 0)
@@ -252,9 +253,9 @@ func (c *controller) getECRAuthorizationKey() ([]AuthToken, error) {
 	return tokens, nil
 }
 
-func generateSecretObj(tokens []AuthToken, isJSONCfg bool, secretName string) (*v1.Secret, error) {
-	secret := &v1.Secret{
-		ObjectMeta: v1.ObjectMeta{
+func generateSecretObj(tokens []AuthToken, isJSONCfg bool, secretName string) (*corev1.Secret, error) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: secretName,
 		},
 	}
@@ -354,7 +355,7 @@ func getSecretGenerators(c *controller) []SecretGenerator {
 	return secretGenerators
 }
 
-func (c *controller) processNamespace(namespace *v1.Namespace, secret *v1.Secret) error {
+func (c *controller) processNamespace(namespace *corev1.Namespace, secret *corev1.Secret) error {
 	log := logrus.WithField("function", "processNamespace")
 	// Check if the secret exists for the namespace
 	log.Debugf("checking for secret %s in namespace %s", secret.Name, namespace.GetName())
@@ -389,7 +390,7 @@ func (c *controller) processNamespace(namespace *v1.Namespace, secret *v1.Secret
 	imagePullSecretFound := false
 	for i, imagePullSecret := range serviceAccount.ImagePullSecrets {
 		if imagePullSecret.Name == secret.Name {
-			serviceAccount.ImagePullSecrets[i] = v1.LocalObjectReference{Name: secret.Name}
+			serviceAccount.ImagePullSecrets[i] = corev1.LocalObjectReference{Name: secret.Name}
 			imagePullSecretFound = true
 			break
 		}
@@ -397,7 +398,7 @@ func (c *controller) processNamespace(namespace *v1.Namespace, secret *v1.Secret
 
 	// Append to list of existing service accounts if there isn't one already
 	if !imagePullSecretFound {
-		serviceAccount.ImagePullSecrets = append(serviceAccount.ImagePullSecrets, v1.LocalObjectReference{Name: secret.Name})
+		serviceAccount.ImagePullSecrets = append(serviceAccount.ImagePullSecrets, corev1.LocalObjectReference{Name: secret.Name})
 	}
 
 	log.Infof("Updating ServiceAccount %s in namespace %s", serviceAccount.Name, namespace.GetName())
@@ -410,8 +411,8 @@ func (c *controller) processNamespace(namespace *v1.Namespace, secret *v1.Secret
 	return nil
 }
 
-func (c *controller) generateSecrets() []*v1.Secret {
-	var secrets []*v1.Secret
+func (c *controller) generateSecrets() []*corev1.Secret {
+	var secrets []*corev1.Secret
 	secretGenerators := getSecretGenerators(c)
 
 	maxTries := RetryCfg.NumberOfRetries + 1
@@ -606,7 +607,7 @@ func validateParams() {
 	}
 }
 
-func handler(c *controller, ns *v1.Namespace) error {
+func handler(c *controller, ns *corev1.Namespace) error {
 	logrus.Infof("Refreshing credentials for namespace %s", ns.GetName())
 	secrets := c.generateSecrets()
 	logrus.Infof("Got %d refreshed credentials for namespace %s", len(secrets), ns.GetName())
@@ -657,7 +658,7 @@ func main() {
 	acrClient := newACRClient()
 	c := &controller{util, ecrClient, gcrClient, dprClient, acrClient}
 
-	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *v1.Namespace) error {
+	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *corev1.Namespace) error {
 		return handler(c, ns)
 	})
 }
