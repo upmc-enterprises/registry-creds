@@ -5,6 +5,7 @@ metadata:
 spec:
   template:
     spec:
+      serviceAccountName: registry-creds
       containers:
       - image: ghcr.io/manifest-cyber/registry-creds
         name: registry-creds
