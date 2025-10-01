@@ -157,4 +157,6 @@ If you want to hack on this project:
 
 ## About
 
-Built by UPMC Enterprises in Pittsburgh, PA. http://enterprises.upmc.com/
+Maintained by https://manifestcyber.com.
+Forked from https://github.comepmc-enterprses/registry-creds.
+Originally Built by UPMC Enterprises in Pittsburgh, PA. http://enterprises.upmc.com/
