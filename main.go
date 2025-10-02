@@ -33,19 +33,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/cenkalti/backoff"
-	flag "github.com/spf13/pflag"
 	"github.com/manifest-cyber/registry-creds/k8sutil"
+	"github.com/sirupsen/logrus"
+	flag "github.com/spf13/pflag"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	corev1 "k8s.io/api/core/v1"
-  metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -90,7 +90,7 @@ var (
 	argTokenGenFxnRetryType  = flags.String("token-retry-type", defaultTokenGenRetryType, `The type of retry timer to use when generating a secret token; either simple or exponential (simple)`)
 	argTokenGenFxnRetries    = flags.Int("token-retries", defaultTokenGenRetries, `Default number of times to retry generating a secret token (3)`)
 	argTokenGenFxnRetryDelay = flags.Int("token-retry-delay", defaultTokenGenRetryDelay, `Default number of seconds to wait before retrying secret token generation (5 seconds)`)
-  argServiceAccount        = flags.String("service-account", "registry-creds", "ServiceAccount to use, defaults to 'registry-creds'")
+	argServiceAccount        = flags.String("service-account", "registry-creds", "ServiceAccount to use, defaults to 'registry-creds'")
 )
 
 var (
@@ -146,7 +146,18 @@ type acrInterface interface {
 }
 
 func newEcrClient() ecrInterface {
-	sess := session.Must(session.NewSession())
+	// Create session with explicit credential chain
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{
+			Region: aws.String(*argAWSRegion),
+		},
+		// This ensures the credential chain is properly initialized
+		SharedConfigState: session.SharedConfigEnable,
+	})
+	if err != nil {
+		logrus.Fatalf("Failed to create AWS session: %v", err)
+	}
+
 	awsConfig := aws.NewConfig().WithRegion(*argAWSRegion)
 
 	if *argAWSAssumeRole != "" {
