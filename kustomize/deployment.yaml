@@ -11,16 +11,16 @@ spec:
         name: registry-creds
         imagePullPolicy: IfNotPresent
         envFrom:
-          - secretKeyRef:
+          - secretRef:
               name: registry-creds-dpr
               optional: true
-          - secretKeyRef:
+          - secretRef:
               name: registry-creds-ecr
               optional: true
-          - secretKeyRef:
+          - secretRef:
               name: registry-creds-gcr
               optional: true
-          - secretKeyRef:
+          - secretRef:
               name: registry-creds-acr
               optional: true
         volumeMounts:
