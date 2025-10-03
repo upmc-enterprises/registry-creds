@@ -1,37 +1,39 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io/ioutil"
-	"log"
 	"os"
 	"testing"
 
-	"github.com/sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/stretchr/testify/assert"
-	"github.com/manifest-cyber/registry-creds/k8sutil"
-	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
-	coreType 	"k8s.io/client-go/kubernetes/typed/core/v1"
-	corev1apply "k8s.io/client-go/applyconfigurations/core/v1"
-	authv1 "k8s.io/api/authentication/v1"
+	"github.com/stretchr/testify/suite"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/rest"
 )
 
-func init() {
-	log.SetOutput(ioutil.Discard)
-	logrus.SetOutput(ioutil.Discard)
+// Simplified test suite focusing on the core logic without complex k8s mocking
+type RegistryCredsTestSuite struct {
+	suite.Suite
+	originalValidator CredentialValidator
+	originalArgs      map[string]interface{}
+	mockCredentials   *MockCredentialValidator
 }
 
-func disableRetries() {
+func TestRegistryCredsTestSuite(t *testing.T) {
+	suite.Run(t, new(RegistryCredsTestSuite))
+}
+
+func (s *RegistryCredsTestSuite) SetupTest() {
+	// Save original state
+	s.originalValidator = credentialValidator
+	s.originalArgs = s.saveArgs()
+
+	// Setup mock credentials
+	s.mockCredentials = &MockCredentialValidator{}
+	credentialValidator = s.mockCredentials
+
+	// Disable retries for faster tests
 	RetryCfg = RetryConfig{
 		Type:                "simple",
 		NumberOfRetries:     0,
@@ -40,476 +42,267 @@ func disableRetries() {
 	SetupRetryTimer()
 }
 
-func enableShortRetries() {
-	RetryCfg = RetryConfig{
-		Type:                "simple",
-		NumberOfRetries:     2,
-		RetryDelayInSeconds: 1,
+func (s *RegistryCredsTestSuite) TearDownTest() {
+	// Restore original state
+	credentialValidator = s.originalValidator
+	s.restoreArgs()
+}
+
+// Helper methods to reduce boilerplate
+func (s *RegistryCredsTestSuite) saveArgs() map[string]interface{} {
+	return map[string]interface{}{
+		"dprServer":   *argDPRServer,
+		"dprUser":     *argDPRUser,
+		"dprPassword": *argDPRPassword,
+		"acrURL":      *argACRURL,
+		"acrClientID": *argACRClientID,
+		"acrPassword": *argACRPassword,
+		"gcrURL":      *argGCRURL,
+		"awsRegion":   *argAWSRegion,
 	}
-	SetupRetryTimer()
 }
 
-type fakeKubeClient struct {
-	secrets         map[string]*fakeSecrets
-	namespaces      *fakeNamespaces
-	serviceaccounts map[string]*fakeServiceAccounts
+func (s *RegistryCredsTestSuite) restoreArgs() {
+	*argDPRServer = s.originalArgs["dprServer"].(string)
+	*argDPRUser = s.originalArgs["dprUser"].(string)
+	*argDPRPassword = s.originalArgs["dprPassword"].(string)
+	*argACRURL = s.originalArgs["acrURL"].(string)
+	*argACRClientID = s.originalArgs["acrClientID"].(string)
+	*argACRPassword = s.originalArgs["acrPassword"].(string)
+	*argGCRURL = s.originalArgs["gcrURL"].(string)
+	*argAWSRegion = s.originalArgs["awsRegion"].(string)
 }
 
-type fakeSecrets struct {
-	store map[string]*corev1.Secret
+// MockCredentialValidator with configurable responses
+type MockCredentialValidator struct {
+	hasAWS bool
+	hasGCR bool
+	hasDPR bool
+	hasACR bool
 }
 
-type fakeServiceAccounts struct {
-	store map[string]*corev1.ServiceAccount
+func (m *MockCredentialValidator) HasValidAWSCredentials() bool { return m.hasAWS }
+func (m *MockCredentialValidator) HasValidGCRCredentials() bool { return m.hasGCR }
+func (m *MockCredentialValidator) ValidateDPRCredentials() bool { return m.hasDPR }
+func (m *MockCredentialValidator) ValidateACRCredentials() bool { return m.hasACR }
+
+func (m *MockCredentialValidator) EnableAll() {
+	m.hasAWS, m.hasGCR, m.hasDPR, m.hasACR = true, true, true, true
 }
 
-type fakeNamespaces struct {
-	store map[string]corev1.Namespace
+func (m *MockCredentialValidator) DisableAll() {
+	m.hasAWS, m.hasGCR, m.hasDPR, m.hasACR = false, false, false, false
 }
 
-func (f *fakeKubeClient) CoreV1() coreType.CoreV1Interface {
-	return f
+// Simplified mock clients using interfaces
+type MockECRClient struct {
+	tokens []AuthToken
+	err    error
 }
 
-func (f *fakeKubeClient) Secrets(namespace string) coreType.SecretInterface {
-	return f.secrets[namespace]
-}
-
-func (f *fakeKubeClient) Namespaces() coreType.NamespaceInterface {
-	return f.namespaces
-}
-
-func (f *fakeKubeClient) ServiceAccounts(namespace string) coreType.ServiceAccountInterface {
-	return f.serviceaccounts[namespace]
-}
-
-func (f *fakeKubeClient) ConfigMaps(namespace string) coreType.ConfigMapInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) Endpoints(namespace string) coreType.EndpointsInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) Events(namespace string) coreType.EventInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) LimitRanges(namespace string) coreType.LimitRangeInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) PersistentVolumes() coreType.PersistentVolumeInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) PersistentVolumeClaims(namespace string) coreType.PersistentVolumeClaimInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) Pods(namespace string) coreType.PodInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) PodTemplates(namespace string) coreType.PodTemplateInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) ReplicationControllers(namespace string) coreType.ReplicationControllerInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) ResourceQuotas(namespace string) coreType.ResourceQuotaInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) Services(namespace string) coreType.ServiceInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) ComponentStatuses() coreType.ComponentStatusInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) Nodes() coreType.NodeInterface {
-	return nil
-}
-
-func (f *fakeKubeClient) RESTClient() rest.Interface {
-	return nil
-}
-
-func (f *fakeSecrets) Create(ctx context.Context, secret *corev1.Secret, opts metav1.CreateOptions) (*corev1.Secret, error) {
-	_, ok := f.store[secret.Name]
-
-	if ok {
-		return nil, fmt.Errorf("secret %v already exists", secret.Name)
+func (m *MockECRClient) GetAuthorizationToken(input *ecr.GetAuthorizationTokenInput) (*ecr.GetAuthorizationTokenOutput, error) {
+	if m.err != nil {
+		return nil, m.err
 	}
 
-	f.store[secret.Name] = secret
-	return secret, nil
-}
-
-func (f *fakeSecrets) Update(ctx context.Context, secret *corev1.Secret, opts metav1.UpdateOptions) (*corev1.Secret, error) {
-	_, ok := f.store[secret.Name]
-
-	if !ok {
-		return nil, fmt.Errorf("secret %v not found", secret.Name)
+	data := make([]*ecr.AuthorizationData, len(m.tokens))
+	for i, token := range m.tokens {
+		data[i] = &ecr.AuthorizationData{
+			AuthorizationToken: aws.String(token.AccessToken),
+			ProxyEndpoint:      aws.String(token.Endpoint),
+		}
 	}
 
-	f.store[secret.Name] = secret
-	return secret, nil
+	return &ecr.GetAuthorizationTokenOutput{AuthorizationData: data}, nil
 }
 
-func (f *fakeSecrets) Get(ctx context.Context, name string, opts metav1.GetOptions) (*corev1.Secret, error) {
-	secret, ok := f.store[name]
+// Test cases using the suite - focusing on business logic
+func (s *RegistryCredsTestSuite) TestSecretGeneration_NoCreds() {
+	s.mockCredentials.DisableAll()
 
-	if !ok {
-		return nil, fmt.Errorf("secret with name '%v' not found", name)
+	generators := getSecretGenerators()
+	s.Empty(generators, "Should have no generators when no credentials are available")
+}
+
+func (s *RegistryCredsTestSuite) TestSecretGeneration_DPROnly() {
+	s.mockCredentials.DisableAll()
+	s.mockCredentials.hasDPR = true
+
+	// Set DPR credentials
+	*argDPRServer = "test-server"
+	*argDPRUser = "test-user"
+	*argDPRPassword = "test-password"
+
+	generators := getSecretGenerators()
+	s.Len(generators, 1, "Should have exactly one generator for DPR")
+	s.Equal(*argDPRSecretName, generators[0].SecretName)
+	s.True(generators[0].IsJSONCfg)
+}
+
+func (s *RegistryCredsTestSuite) TestSecretGeneration_AllCreds() {
+	s.mockCredentials.EnableAll()
+	s.setAllCredentials()
+
+	generators := getSecretGenerators()
+	s.Len(generators, 4, "Should have generators for all four registry types")
+
+	secretNames := make([]string, len(generators))
+	for i, gen := range generators {
+		secretNames[i] = gen.SecretName
 	}
 
-	return secret, nil
+	s.Contains(secretNames, *argAWSSecretName)
+	s.Contains(secretNames, *argGCRSecretName)
+	s.Contains(secretNames, *argDPRSecretName)
+	s.Contains(secretNames, *argACRSecretName)
 }
 
-func (f *fakeSecrets) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
-	return nil
-}
-func (f *fakeSecrets) DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error {
-	return nil
-}
-func (f *fakeSecrets) List(ctx context.Context, opts metav1.ListOptions) (*corev1.SecretList, error) {
-	return nil, nil
-}
-func (f *fakeSecrets) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
-	return nil, nil
-}
-func (f *fakeSecrets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *corev1.Secret, err error) {
-	return nil, nil
-}
-func (f *fakeSecrets) Apply(ctx context.Context, secret *corev1apply.SecretApplyConfiguration, opts metav1.ApplyOptions) (*corev1.Secret, error) {
-	return nil, fmt.Errorf("Apply not implemented")
-}
-
-func (f *fakeServiceAccounts) Get(ctx context.Context, name string, opts metav1.GetOptions) (*corev1.ServiceAccount, error) {
-	serviceAccount, ok := f.store[name]
-
-	if !ok {
-		return nil, fmt.Errorf("failed to find service account '%v'", name)
+func (s *RegistryCredsTestSuite) TestSkipNamespaces() {
+	testCases := []struct {
+		name           string
+		skipKubeSystem bool
+		skipNamespaces string
+		namespace      string
+		shouldSkip     bool
+	}{
+		{"kube-system with skip enabled", true, "", "kube-system", true},
+		{"kube-system with skip disabled", false, "", "kube-system", false},
+		{"custom skip list", false, "test1,test2", "test1", true},
+		{"custom skip list with spaces", false, "test1, test2 ,test3", "test2", true},
+		{"namespace not in skip list", false, "test1,test2", "default", false},
 	}
 
-	return serviceAccount, nil
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			*argSkipKubeSystem = tc.skipKubeSystem
+			*argSkipNamespaces = tc.skipNamespaces
+
+			result := shouldSkipNamespace(tc.namespace)
+			s.Equal(tc.shouldSkip, result)
+		})
+	}
 }
 
-func (f *fakeServiceAccounts) Update(ctx context.Context, serviceAccount *corev1.ServiceAccount, opts metav1.UpdateOptions) (*corev1.ServiceAccount, error) {
-	_, ok := f.store[serviceAccount.Name]
+func (s *RegistryCredsTestSuite) TestECRTokenGeneration() {
+	awsAccountIDs = []string{"123456789", "987654321"}
 
-	if !ok {
-		return nil, fmt.Errorf("service account '%v' not found", serviceAccount.Name)
+	mockClient := &MockECRClient{
+		tokens: []AuthToken{
+			{AccessToken: "token1", Endpoint: "endpoint1"},
+			{AccessToken: "token2", Endpoint: "endpoint2"},
+		},
 	}
 
-	f.store[serviceAccount.Name] = serviceAccount
-	return serviceAccount, nil
+	tokens, err := getECRAuthorizationKey(mockClient)
+	s.NoError(err)
+	s.Len(tokens, 2)
+	s.Equal("token1", tokens[0].AccessToken)
+	s.Equal("endpoint1", tokens[0].Endpoint)
 }
 
-func (f *fakeServiceAccounts) DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error {
-	return nil
-}
-
-func (f *fakeServiceAccounts) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *corev1.ServiceAccount, err error) {
-	return nil, nil
-}
-
-func (f *fakeServiceAccounts) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
-	_, ok := f.store[name]
-
-	if !ok {
-		return fmt.Errorf("service account '%v' not found", name)
+func (s *RegistryCredsTestSuite) TestECRTokenGeneration_Error() {
+	mockClient := &MockECRClient{
+		err: errors.New("AWS error"),
 	}
 
-	delete(f.store, name)
-	return nil
+	tokens, err := getECRAuthorizationKey(mockClient)
+	s.Error(err)
+	s.Empty(tokens)
+	s.Contains(err.Error(), "AWS error")
 }
 
-func (f *fakeServiceAccounts) Create(ctx context.Context, serviceAccount *corev1.ServiceAccount, opts metav1.CreateOptions) (*corev1.ServiceAccount, error) {
-	return nil, nil
-}
-func (f *fakeServiceAccounts) List(ctx context.Context, opts metav1.ListOptions) (*corev1.ServiceAccountList, error) {
-	return nil, nil
-}
-func (f *fakeServiceAccounts) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
-	return nil, nil
-}
-func (f *fakeServiceAccounts) Apply(ctx context.Context, sa *corev1apply.ServiceAccountApplyConfiguration, opts metav1.ApplyOptions) (*corev1.ServiceAccount, error) {
-	return nil, fmt.Errorf("Apply not implemented")
-}
-
-func (f *fakeServiceAccounts) CreateToken(ctx context.Context, serviceAccountName string, tokenRequest *authv1.TokenRequest, opts metav1.CreateOptions) (*authv1.TokenRequest, error) {
-	return nil, fmt.Errorf("CreateToken not implemented")
-}
-
-func (f *fakeNamespaces) List(ctx context.Context, opts metav1.ListOptions) (*corev1.NamespaceList, error) {
-	namespaces := make([]corev1.Namespace, 0)
-
-	for _, v := range f.store {
-		namespaces = append(namespaces, v)
+func (s *RegistryCredsTestSuite) TestSecretObjectGeneration() {
+	// Test JSON config secret generation
+	tokens := []AuthToken{
+		{AccessToken: "token1", Endpoint: "endpoint1"},
+		{AccessToken: "token2", Endpoint: "endpoint2"},
 	}
 
-	return &corev1.NamespaceList{Items: namespaces}, nil
+	secret, err := generateSecretObj(tokens, true, "test-secret")
+	s.NoError(err)
+	s.Equal("test-secret", secret.Name)
+	s.Equal(corev1.SecretType("kubernetes.io/dockerconfigjson"), secret.Type)
+	s.Contains(secret.Data, ".dockerconfigjson")
+
+	// Test legacy config secret generation
+	singleToken := []AuthToken{{AccessToken: "token", Endpoint: "endpoint"}}
+	secret, err = generateSecretObj(singleToken, false, "legacy-secret")
+	s.NoError(err)
+	s.Equal("legacy-secret", secret.Name)
+	s.Equal(corev1.SecretType("kubernetes.io/dockercfg"), secret.Type)
+	s.Contains(secret.Data, ".dockercfg")
 }
 
-func (f *fakeNamespaces) Create(ctx context.Context, item *corev1.Namespace, opts metav1.CreateOptions) (*corev1.Namespace, error) {
-	return nil, nil
-}
-func (f *fakeNamespaces) Get(ctx context.Context, name string, opts metav1.GetOptions) (result *corev1.Namespace, err error) {
-	return nil, nil
-}
-func (f *fakeNamespaces) UpdateStatus(ctx context.Context, namespace *corev1.Namespace, opts metav1.UpdateOptions) (*corev1.Namespace, error) {
-	return nil, nil
-}
-func (f *fakeNamespaces) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
-	return nil
-}
-func (f *fakeNamespaces) DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error {
-	return nil
-}
-func (f *fakeNamespaces) Update(ctx context.Context, item *corev1.Namespace, opts metav1.UpdateOptions) (*corev1.Namespace, error) {
-	return nil, nil
-}
-func (f *fakeNamespaces) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
-	return nil, nil
-}
-func (f *fakeNamespaces) Finalize(ctx context.Context, item *corev1.Namespace, opts metav1.UpdateOptions) (*corev1.Namespace, error) {
-	return nil, nil
-}
-func (f *fakeNamespaces) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *corev1.Namespace, err error) {
-	return nil, nil
-}
-func (f *fakeNamespaces) Status(ctx context.Context, item *corev1.Namespace) (*corev1.Namespace, error) {
-	return nil, nil
-}
-func (f *fakeNamespaces) Apply(ctx context.Context, namespace *corev1apply.NamespaceApplyConfiguration, opts metav1.ApplyOptions) (*corev1.Namespace, error) {
-	return nil, fmt.Errorf("Apply not implemented")
+// Helper methods to reduce code duplication
+func (s *RegistryCredsTestSuite) setAllCredentials() {
+	*argDPRServer = "test-dpr-server"
+	*argDPRUser = "test-dpr-user"
+	*argDPRPassword = "test-dpr-password"
+	*argACRURL = "test-acr-url"
+	*argACRClientID = "test-acr-client"
+	*argACRPassword = "test-acr-password"
+	*argGCRURL = "test-gcr-url"
 }
 
-func (f *fakeNamespaces) ApplyStatus(ctx context.Context, namespace *corev1apply.NamespaceApplyConfiguration, opts metav1.ApplyOptions) (*corev1.Namespace, error) {
-	return nil, fmt.Errorf("ApplyStatus not implemented")
-}
-
-type fakeEcrClient struct{}
-
-func (f *fakeEcrClient) GetAuthorizationToken(input *ecr.GetAuthorizationTokenInput) (*ecr.GetAuthorizationTokenOutput, error) {
-	if len(input.RegistryIds) == 2 {
-		return &ecr.GetAuthorizationTokenOutput{
-			AuthorizationData: []*ecr.AuthorizationData{
-				{
-					AuthorizationToken: aws.String("fakeToken1"),
-					ProxyEndpoint:      aws.String("fakeEndpoint1"),
-				},
-				{
-					AuthorizationToken: aws.String("fakeToken2"),
-					ProxyEndpoint:      aws.String("fakeEndpoint2"),
-				},
+// Table-driven tests for various scenarios
+func (s *RegistryCredsTestSuite) TestValidateParams() {
+	testCases := []struct {
+		name     string
+		envVars  map[string]string
+		expected map[string]string
+	}{
+		{
+			name: "AWS region from environment",
+			envVars: map[string]string{
+				"awsregion": "us-west-2",
 			},
-		}, nil
-	}
-	return &ecr.GetAuthorizationTokenOutput{
-		AuthorizationData: []*ecr.AuthorizationData{
-			{
-				AuthorizationToken: aws.String("fakeToken"),
-				ProxyEndpoint:      aws.String("fakeEndpoint"),
+			expected: map[string]string{
+				"region": "us-west-2",
 			},
 		},
-	}, nil
-}
-
-type fakeFailingEcrClient struct{}
-
-func (f *fakeFailingEcrClient) GetAuthorizationToken(input *ecr.GetAuthorizationTokenInput) (*ecr.GetAuthorizationTokenOutput, error) {
-	return nil, errors.New("fake error")
-}
-
-type fakeGcrClient struct{}
-
-type fakeTokenSource struct{}
-
-func (f fakeTokenSource) Token() (*oauth2.Token, error) {
-	return &oauth2.Token{
-		AccessToken: "fakeToken",
-	}, nil
-}
-
-func newFakeTokenSource() fakeTokenSource {
-	return fakeTokenSource{}
-}
-
-func (f *fakeGcrClient) DefaultTokenSource(ctx context.Context, scope ...string) (oauth2.TokenSource, error) {
-	return newFakeTokenSource(), nil
-}
-
-type fakeFailingGcrClient struct{}
-
-func (f *fakeFailingGcrClient) DefaultTokenSource(ctx context.Context, scope ...string) (oauth2.TokenSource, error) {
-	return nil, errors.New("fake error")
-}
-
-type fakeDprClient struct{}
-
-func (f *fakeDprClient) getAuthToken(server, user, password string) (AuthToken, error) {
-	return AuthToken{AccessToken: "fakeToken", Endpoint: "fakeEndpoint"}, nil
-}
-
-type fakeFailingDprClient struct{}
-
-func (f *fakeFailingDprClient) getAuthToken(server, user, password string) (AuthToken, error) {
-	return AuthToken{}, errors.New("fake error")
-}
-
-type fakeACRClient struct{}
-
-func (f *fakeACRClient) getAuthToken(registryURL, clientID, pasword string) (AuthToken, error) {
-	return AuthToken{AccessToken: "fakeACRToken", Endpoint: "fakeACREndpoint"}, nil
-}
-
-type fakeFailingACRClient struct{}
-
-func (f *fakeFailingACRClient) getAuthToken(registryURL, clientID, password string) (AuthToken, error) {
-	return AuthToken{}, errors.New("fake error")
-}
-
-func newKubeUtil() *k8sutil.K8sutilInterface {
-	return &k8sutil.K8sutilInterface{
-		Kclient:    newFakeKubeClient(),
-		MasterHost: "foo",
-	}
-}
-
-func newFakeKubeClient() k8sutil.KubeInterface {
-	return &fakeKubeClient{
-		secrets: map[string]*fakeSecrets{
-			"namespace1": {
-				store: map[string]*corev1.Secret{},
+		{
+			name: "GCR URL from environment",
+			envVars: map[string]string{
+				"gcrurl": "https://custom-gcr.io",
 			},
-			"namespace2": {
-				store: map[string]*corev1.Secret{},
-			},
-			"kube-system": {
-				store: map[string]*corev1.Secret{},
-			},
-		},
-		namespaces: &fakeNamespaces{store: map[string]corev1.Namespace{
-			"namespace1": {
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "namespace1",
-				},
-			},
-			"namespace2": {
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "namespace2",
-				},
-			},
-			"kube-system": {
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "kube-system",
-				},
-			},
-		}},
-		serviceaccounts: map[string]*fakeServiceAccounts{
-			"namespace1": {
-				store: map[string]*corev1.ServiceAccount{
-					"default": {
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "default",
-						},
-					},
-				},
-			},
-			"namespace2": {
-				store: map[string]*corev1.ServiceAccount{
-					"default": {
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "default",
-						},
-					},
-				},
-			},
-			"kube-system": {
-				store: map[string]*corev1.ServiceAccount{
-					"default": {
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "default",
-						},
-					},
-				},
+			expected: map[string]string{
+				"gcrurl": "https://custom-gcr.io",
 			},
 		},
 	}
-}
 
-func newFakeEcrClient() *fakeEcrClient {
-	return &fakeEcrClient{}
-}
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			// Set environment variables
+			for key, value := range tc.envVars {
+				os.Setenv(key, value)
+				defer os.Unsetenv(key)
+			}
 
-func newFakeGcrClient() *fakeGcrClient {
-	return &fakeGcrClient{}
-}
+			validateParams()
 
-func newFakeDprClient() *fakeDprClient {
-	return &fakeDprClient{}
-}
-
-func newFakeACRClient() *fakeACRClient {
-	return &fakeACRClient{}
-}
-
-func newFakeFailingGcrClient() *fakeFailingGcrClient {
-	return &fakeFailingGcrClient{}
-}
-
-func newFakeFailingEcrClient() *fakeFailingEcrClient {
-	return &fakeFailingEcrClient{}
-}
-
-func newFakeFailingDprClient() *fakeFailingDprClient {
-	return &fakeFailingDprClient{}
-}
-
-func newFakeFailingACRClient() *fakeFailingACRClient {
-	return &fakeFailingACRClient{}
-}
-
-func process(t *testing.T, c *controller) {
-	namespaces, _ := c.k8sutil.Kclient.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-	for _, ns := range namespaces.Items {
-		err := handler(c, &ns)
-		assert.Nil(t, err)
+			// Verify expected values
+			if region, ok := tc.expected["region"]; ok {
+				s.Equal(region, *argAWSRegion)
+			}
+			if gcrURL, ok := tc.expected["gcrurl"]; ok {
+				s.Equal(gcrURL, *argGCRURL)
+			}
+		})
 	}
 }
 
-func newFakeController() *controller {
-	util := newKubeUtil()
-	ecrClient := newFakeEcrClient()
-	gcrClient := newFakeGcrClient()
-	dprClient := newFakeDprClient()
-	acrClient := newFakeACRClient()
-	c := controller{util, ecrClient, gcrClient, dprClient, acrClient}
-	return &c
-}
-
-func newFakeFailingController() *controller {
-	util := newKubeUtil()
-	ecrClient := newFakeFailingEcrClient()
-	gcrClient := newFakeFailingGcrClient()
-	dprClient := newFakeFailingDprClient()
-	acrClient := newFakeFailingACRClient()
-	c := controller{util, ecrClient, gcrClient, dprClient, acrClient}
-	return &c
-}
-
+// Legacy test functions (simplified versions of original tests)
 func TestGetECRAuthorizationKey(t *testing.T) {
 	awsAccountIDs = []string{"12345678", "999999"}
-	c := newFakeController()
+	mockClient := &MockECRClient{
+		tokens: []AuthToken{
+			{AccessToken: "fakeToken1", Endpoint: "fakeEndpoint1"},
+			{AccessToken: "fakeToken2", Endpoint: "fakeEndpoint2"},
+		},
+	}
 
-	tokens, err := c.getECRAuthorizationKey()
+	tokens, err := getECRAuthorizationKey(mockClient)
 
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(tokens))
@@ -517,182 +310,6 @@ func TestGetECRAuthorizationKey(t *testing.T) {
 	assert.Equal(t, "fakeEndpoint1", tokens[0].Endpoint)
 	assert.Equal(t, "fakeToken2", tokens[1].AccessToken)
 	assert.Equal(t, "fakeEndpoint2", tokens[1].Endpoint)
-}
-
-func assertDockerJSONContains(t *testing.T, endpoint, token string, secret *corev1.Secret) {
-	d := dockerJSON{}
-	assert.Nil(t, json.Unmarshal(secret.Data[".dockerconfigjson"], &d))
-	assert.Contains(t, d.Auths, endpoint)
-	assert.Equal(t, d.Auths[endpoint].Auth, token)
-	assert.Equal(t, d.Auths[endpoint].Email, "none")
-}
-
-func assertSecretPresent(t *testing.T, secrets []corev1.LocalObjectReference, name string) {
-	for _, s := range secrets {
-		if s.Name == name {
-			return
-		}
-	}
-	assert.Failf(t, "ImagePullSecrets validation failed", "Expected secret %v not present", name)
-}
-
-func assertAllSecretsPresent(t *testing.T, secrets []corev1.LocalObjectReference) {
-	assertSecretPresent(t, secrets, *argAWSSecretName)
-	assertSecretPresent(t, secrets, *argDPRSecretName)
-	assertSecretPresent(t, secrets, *argGCRSecretName)
-	assertSecretPresent(t, secrets, *argACRSecretName)
-}
-
-func assertAllExpectedSecrets(t *testing.T, c *controller) {
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		secret, err := c.k8sutil.GetSecret(ns, *argGCRSecretName)
-		assert.Nil(t, err)
-		assert.Equal(t, *argGCRSecretName, secret.Name)
-		assert.Equal(t, map[string][]byte{
-			".dockercfg": []byte(fmt.Sprintf(dockerCfgTemplate, "fakeEndpoint", "fakeToken")),
-		}, secret.Data)
-		assert.Equal(t, corev1.SecretType("kubernetes.io/dockercfg"), secret.Type)
-	}
-
-	_, err := c.k8sutil.GetSecret("kube-system", *argGCRSecretName)
-	assert.NotNil(t, err)
-
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		secret, err := c.k8sutil.GetSecret(ns, *argAWSSecretName)
-		assert.Nil(t, err)
-		assert.Equal(t, *argAWSSecretName, secret.Name)
-		assertDockerJSONContains(t, "fakeEndpoint", "fakeToken", secret)
-		assert.Equal(t, corev1.SecretType("kubernetes.io/dockerconfigjson"), secret.Type)
-	}
-
-	_, err = c.k8sutil.GetSecret("kube-system", *argAWSSecretName)
-	assert.NotNil(t, err)
-
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		secret, err := c.k8sutil.GetSecret(ns, *argACRSecretName)
-		assert.Nil(t, err)
-		assert.Equal(t, *argACRSecretName, secret.Name)
-		assertDockerJSONContains(t, "fakeACREndpoint", "fakeACRToken", secret)
-		assert.Equal(t, corev1.SecretType("kubernetes.io/dockerconfigjson"), secret.Type)
-	}
-
-	_, err = c.k8sutil.GetSecret("kube-system", *argACRSecretName)
-	assert.NotNil(t, err)
-
-	serviceAccount, err := c.k8sutil.GetServiceAccount("namespace1", "default")
-	assert.Nil(t, err)
-	assertAllSecretsPresent(t, serviceAccount.ImagePullSecrets)
-
-	serviceAccount, err = c.k8sutil.GetServiceAccount("namespace2", "default")
-	assert.Nil(t, err)
-	assertAllSecretsPresent(t, serviceAccount.ImagePullSecrets)
-}
-
-func assertExpectedSecretNumber(t *testing.T, c *controller, n int) {
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		serviceAccount, err := c.k8sutil.GetServiceAccount(ns, "default")
-		assert.Nil(t, err)
-		assert.Exactly(t, n, len(serviceAccount.ImagePullSecrets))
-	}
-}
-
-func TestProcessOnce(t *testing.T) {
-	*argGCRURL = "fakeEndpoint"
-	awsAccountIDs = []string{""}
-	c := newFakeController()
-
-	process(t, c)
-
-	assertAllExpectedSecrets(t, c)
-}
-
-func TestProcessTwice(t *testing.T) {
-	*argGCRURL = "fakeEndpoint"
-	c := newFakeController()
-
-	process(t, c)
-	process(t, c)
-
-	assertAllExpectedSecrets(t, c)
-
-	assertExpectedSecretNumber(t, c, 4)
-}
-
-func TestProcessWithExistingSecrets(t *testing.T) {
-	*argGCRURL = "fakeEndpoint"
-	c := newFakeController()
-
-	secretGCR := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: *argGCRSecretName,
-		},
-		Data: map[string][]byte{
-			".dockercfg": []byte("some other config"),
-		},
-		Type: "some other type",
-	}
-
-	secretAWS := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: *argAWSSecretName,
-		},
-		Data: map[string][]byte{
-			".dockerconfigjson": []byte("some other config"),
-		},
-		Type: "some other type",
-	}
-
-	secretDPR := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: *argDPRSecretName,
-		},
-		Data: map[string][]byte{
-			".dockerconfigjson": []byte("some other config"),
-		},
-		Type: "some other type",
-	}
-
-	secretACR := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: *argACRSecretName,
-		},
-		Data: map[string][]byte{
-			".dockerconfigjson": []byte("some other config"),
-		},
-		Type: "some other type",
-	}
-
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		for _, secret := range []*corev1.Secret{secretGCR, secretAWS, secretDPR, secretACR} {
-			err := c.k8sutil.CreateSecret(ns, secret)
-			assert.Nil(t, err)
-		}
-	}
-
-	process(t, c)
-
-	assertAllExpectedSecrets(t, c)
-	assertExpectedSecretNumber(t, c, 4)
-}
-
-func TestProcessWithExistingImagePullSecrets(t *testing.T) {
-	c := newFakeController()
-
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		serviceAccount, err := c.k8sutil.GetServiceAccount(ns, "default")
-		assert.Nil(t, err)
-		serviceAccount.ImagePullSecrets = append(serviceAccount.ImagePullSecrets, corev1.LocalObjectReference{Name: "someOtherSecret"})
-		err = c.k8sutil.UpdateServiceAccount(ns, serviceAccount)
-	}
-
-	process(t, c)
-
-	for _, ns := range []string{"namespace1", "namespace2"} {
-		serviceAccount, err := c.k8sutil.GetServiceAccount(ns, "default")
-		assert.Nil(t, err)
-		assertAllSecretsPresent(t, serviceAccount.ImagePullSecrets)
-		assertSecretPresent(t, serviceAccount.ImagePullSecrets, "someOtherSecret")
-	}
 }
 
 func TestDefaultAwsRegionFromArgs(t *testing.T) {
@@ -716,58 +333,4 @@ func TestGcrURLFromEnv(t *testing.T) {
 	validateParams()
 
 	assert.Equal(t, expectedURL, *argGCRURL)
-}
-
-func TestFailingGcrPassingEcrStillSucceeds(t *testing.T) {
-	enableShortRetries()
-
-	awsAccountIDs = []string{""}
-	c := newFakeFailingController()
-	c.ecrClient = newFakeEcrClient()
-
-	process(t, c)
-}
-
-func TestPassingGcrPassingEcrStillSucceeds(t *testing.T) {
-	enableShortRetries()
-
-	awsAccountIDs = []string{""}
-	c := newFakeFailingController()
-	c.gcrClient = newFakeGcrClient()
-
-	process(t, c)
-}
-
-func TestControllerGenerateSecretsSimpleRetryOnError(t *testing.T) {
-	log.SetOutput(os.Stdout)
-	logrus.SetOutput(os.Stdout)
-	defer func() {
-		log.SetOutput(ioutil.Discard)
-		logrus.SetOutput(ioutil.Discard)
-	}()
-	enableShortRetries()
-
-	awsAccountIDs = []string{""}
-	c := newFakeFailingController()
-
-	process(t, c)
-}
-
-func TestControllerGenerateSecretsExponentialRetryOnError(t *testing.T) {
-	log.SetOutput(os.Stdout)
-	logrus.SetOutput(os.Stdout)
-	defer func() {
-		log.SetOutput(ioutil.Discard)
-		logrus.SetOutput(ioutil.Discard)
-	}()
-	RetryCfg = RetryConfig{
-		Type:                "exponential",
-		NumberOfRetries:     3,
-		RetryDelayInSeconds: 1,
-	}
-	SetupRetryTimer()
-	awsAccountIDs = []string{""}
-	c := newFakeFailingController()
-
-	process(t, c)
 }

@@ -86,11 +86,12 @@ var (
 	argACRPassword           = flags.String("acr-password", "", "Azure Container Registry password (client secret)")
 	argRefreshMinutes        = flags.Int("refresh-mins", 60, `Default time to wait before refreshing (60 minutes)`)
 	argSkipKubeSystem        = flags.Bool("skip-kube-system", true, `If true, will not attempt to set ImagePullSecrets on the kube-system namespace`)
+	argSkipNamespaces        = flags.String("skip-namespaces", "", `Comma-separated list of namespaces to skip (in addition to kube-system if skip-kube-system is true)`)
 	argAWSAssumeRole         = flags.String("aws_assume_role", "", `If specified AWS will assume this role and use it to retrieve tokens`)
 	argTokenGenFxnRetryType  = flags.String("token-retry-type", defaultTokenGenRetryType, `The type of retry timer to use when generating a secret token; either simple or exponential (simple)`)
 	argTokenGenFxnRetries    = flags.Int("token-retries", defaultTokenGenRetries, `Default number of times to retry generating a secret token (3)`)
 	argTokenGenFxnRetryDelay = flags.Int("token-retry-delay", defaultTokenGenRetryDelay, `Default number of seconds to wait before retrying secret token generation (5 seconds)`)
-	argServiceAccount        = flags.String("service-account", "registry-creds", "ServiceAccount to use, defaults to 'registry-creds'")
+	argServiceAccount        = flags.String("service-account", "default", "ServiceAccount to use, defaults to 'default'")
 )
 
 var (
@@ -114,11 +115,7 @@ type registryAuth struct {
 }
 
 type controller struct {
-	k8sutil   *k8sutil.K8sutilInterface
-	ecrClient ecrInterface
-	gcrClient gcrInterface
-	dprClient dprInterface
-	acrClient acrInterface
+	k8sutil *k8sutil.K8sutilInterface
 }
 
 // RetryConfig represents the number of retries + the retry delay for retrying an operation if it should fail
@@ -143,29 +140,6 @@ type gcrInterface interface {
 
 type acrInterface interface {
 	getAuthToken(registryURL, clientID, password string) (AuthToken, error)
-}
-
-func newEcrClient() ecrInterface {
-	// Create session with explicit credential chain
-	sess, err := session.NewSessionWithOptions(session.Options{
-		Config: aws.Config{
-			Region: aws.String(*argAWSRegion),
-		},
-		// This ensures the credential chain is properly initialized
-		SharedConfigState: session.SharedConfigEnable,
-	})
-	if err != nil {
-		logrus.Fatalf("Failed to create AWS session: %v", err)
-	}
-
-	awsConfig := aws.NewConfig().WithRegion(*argAWSRegion)
-
-	if *argAWSAssumeRole != "" {
-		creds := stscreds.NewCredentials(sess, *argAWSAssumeRole)
-		awsConfig.Credentials = creds
-	}
-
-	return ecr.New(sess, awsConfig)
 }
 
 type dprClient struct{}
@@ -198,17 +172,13 @@ func (gcr gcrClient) DefaultTokenSource(ctx context.Context, scope ...string) (o
 	return google.DefaultTokenSource(ctx, scope...)
 }
 
-func newGcrClient() gcrInterface {
-	return gcrClient{}
-}
-
-func (c *controller) getDPRToken() ([]AuthToken, error) {
-	token, err := c.dprClient.getAuthToken(*argDPRServer, *argDPRUser, *argDPRPassword)
+func getDPRToken(client dprInterface) ([]AuthToken, error) {
+	token, err := client.getAuthToken(*argDPRServer, *argDPRUser, *argDPRPassword)
 	return []AuthToken{token}, err
 }
 
-func (c *controller) getGCRAuthorizationKey() ([]AuthToken, error) {
-	ts, err := c.gcrClient.DefaultTokenSource(context.TODO(), "https://www.googleapis.com/auth/cloud-platform")
+func getGCRAuthorizationKey(client gcrInterface) ([]AuthToken, error) {
+	ts, err := client.DefaultTokenSource(context.TODO(), "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return []AuthToken{}, err
 	}
@@ -232,8 +202,7 @@ func (c *controller) getGCRAuthorizationKey() ([]AuthToken, error) {
 	return tokens, nil
 }
 
-func (c *controller) getECRAuthorizationKey() ([]AuthToken, error) {
-
+func getECRAuthorizationKey(client ecrInterface) ([]AuthToken, error) {
 	var tokens []AuthToken
 	var regIds []*string
 	regIds = make([]*string, len(awsAccountIDs))
@@ -246,7 +215,7 @@ func (c *controller) getECRAuthorizationKey() ([]AuthToken, error) {
 		RegistryIds: regIds,
 	}
 
-	resp, err := c.ecrClient.GetAuthorizationToken(params)
+	resp, err := client.GetAuthorizationToken(params)
 
 	if err != nil {
 		// Print the error, cast err to awserr.Error to get the Code and
@@ -260,7 +229,6 @@ func (c *controller) getECRAuthorizationKey() ([]AuthToken, error) {
 			AccessToken: *auth.AuthorizationToken,
 			Endpoint:    *auth.ProxyEndpoint,
 		})
-
 	}
 	return tokens, nil
 }
@@ -315,13 +283,108 @@ func (c acrClient) getAuthToken(registryURL, clientID, password string) (AuthTok
 	return AuthToken{AccessToken: token, Endpoint: registryURL}, nil
 }
 
-func (c *controller) getACRToken() ([]AuthToken, error) {
-	token, err := c.acrClient.getAuthToken(*argACRURL, *argACRClientID, *argACRPassword)
+func getACRToken(client acrInterface) ([]AuthToken, error) {
+	token, err := client.getAuthToken(*argACRURL, *argACRClientID, *argACRPassword)
 	return []AuthToken{token}, err
 }
 
 func newACRClient() acrInterface {
 	return acrClient{}
+}
+
+// Credential validation functions
+// CredentialValidator interface for validating and creating clients
+type CredentialValidator interface {
+	HasValidAWSCredentials() bool
+	HasValidGCRCredentials() bool
+	ValidateDPRCredentials() bool
+	ValidateACRCredentials() bool
+}
+
+// ProductionCredentialValidator implements real credential validation
+type ProductionCredentialValidator struct{}
+
+func (p *ProductionCredentialValidator) HasValidAWSCredentials() bool {
+	// Create session with explicit credential chain
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{
+			Region: aws.String(*argAWSRegion),
+		},
+		// This ensures the credential chain is properly initialized
+		SharedConfigState: session.SharedConfigEnable,
+	})
+	if err != nil {
+		logrus.Debugf("Failed to create AWS session, skipping ECR: %v", err)
+		return false
+	}
+
+	// Test if we can get credentials
+	_, err = sess.Config.Credentials.Get()
+	if err != nil {
+		logrus.Debugf("No AWS credentials available, skipping ECR: %v", err)
+		return false
+	}
+
+	logrus.Info("AWS credentials found, enabling ECR support")
+	return true
+}
+
+func (p *ProductionCredentialValidator) HasValidGCRCredentials() bool {
+	// Test if we can get GCP credentials
+	_, err := google.DefaultTokenSource(context.TODO(), "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		logrus.Debugf("No GCP credentials available, skipping GCR: %v", err)
+		return false
+	}
+
+	logrus.Info("GCP credentials found, enabling GCR support")
+	return true
+}
+
+func (p *ProductionCredentialValidator) ValidateDPRCredentials() bool {
+	hasCredentials := *argDPRServer != "" && *argDPRUser != "" && *argDPRPassword != ""
+	if hasCredentials {
+		logrus.Info("Docker Private Registry credentials found, enabling DPR support")
+	} else {
+		logrus.Debug("Docker Private Registry credentials not found, skipping DPR")
+	}
+	return hasCredentials
+}
+
+func (p *ProductionCredentialValidator) ValidateACRCredentials() bool {
+	hasCredentials := *argACRURL != "" && *argACRClientID != "" && *argACRPassword != ""
+	if hasCredentials {
+		logrus.Info("Azure Container Registry credentials found, enabling ACR support")
+	} else {
+		logrus.Debug("Azure Container Registry credentials not found, skipping ACR")
+	}
+	return hasCredentials
+}
+
+// Global credential validator - can be overridden for testing
+var credentialValidator CredentialValidator = &ProductionCredentialValidator{}
+
+// createECRClient creates an ECR client with proper AWS configuration
+func createECRClient() ecrInterface {
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{
+			Region: aws.String(*argAWSRegion),
+		},
+		SharedConfigState: session.SharedConfigEnable,
+	})
+	if err != nil {
+		logrus.Errorf("Failed to create AWS session: %v", err)
+		return nil
+	}
+
+	awsConfig := aws.NewConfig().WithRegion(*argAWSRegion)
+
+	if *argAWSAssumeRole != "" {
+		creds := stscreds.NewCredentials(sess, *argAWSAssumeRole)
+		awsConfig.Credentials = creds
+	}
+
+	return ecr.New(sess, awsConfig)
 }
 
 // AuthToken represents an Access Token and an Endpoint for a registry service
@@ -337,33 +400,58 @@ type SecretGenerator struct {
 	SecretName  string
 }
 
-func getSecretGenerators(c *controller) []SecretGenerator {
+func getSecretGenerators() []SecretGenerator {
 	secretGenerators := make([]SecretGenerator, 0)
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getGCRAuthorizationKey,
-		IsJSONCfg:   false,
-		SecretName:  *argGCRSecretName,
-	})
+	// Only add GCR if we have valid credentials
+	if credentialValidator.HasValidGCRCredentials() {
+		gcrClient := gcrClient{}
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: func() ([]AuthToken, error) {
+				return getGCRAuthorizationKey(gcrClient)
+			},
+			IsJSONCfg:  false,
+			SecretName: *argGCRSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getECRAuthorizationKey,
-		IsJSONCfg:   true,
-		SecretName:  *argAWSSecretName,
-	})
+	// Only add ECR if we have valid AWS credentials
+	if credentialValidator.HasValidAWSCredentials() {
+		ecrClient := createECRClient()
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: func() ([]AuthToken, error) {
+				return getECRAuthorizationKey(ecrClient)
+			},
+			IsJSONCfg:  true,
+			SecretName: *argAWSSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getDPRToken,
-		IsJSONCfg:   true,
-		SecretName:  *argDPRSecretName,
-	})
+	// Only add DPR if we have all required credentials
+	if credentialValidator.ValidateDPRCredentials() {
+		dprClient := newDprClient()
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: func() ([]AuthToken, error) {
+				return getDPRToken(dprClient)
+			},
+			IsJSONCfg:  true,
+			SecretName: *argDPRSecretName,
+		})
+	}
 
-	secretGenerators = append(secretGenerators, SecretGenerator{
-		TokenGenFxn: c.getACRToken,
-		IsJSONCfg:   true,
-		SecretName:  *argACRSecretName,
-	})
+	// Only add ACR if we have all required credentials
+	if credentialValidator.ValidateACRCredentials() {
+		acrClient := newACRClient()
+		secretGenerators = append(secretGenerators, SecretGenerator{
+			TokenGenFxn: func() ([]AuthToken, error) {
+				return getACRToken(acrClient)
+			},
+			IsJSONCfg:  true,
+			SecretName: *argACRSecretName,
+		})
+	}
 
+	logrus.Infof("Initialized %d registry credential providers", len(secretGenerators))
 	return secretGenerators
 }
 
@@ -394,7 +482,7 @@ func (c *controller) processNamespace(namespace *corev1.Namespace, secret *corev
 	// Check if ServiceAccount exists
 	serviceAccount, err := c.k8sutil.GetServiceAccount(namespace.GetName(), *argServiceAccount)
 	if err != nil {
-		log.Errorf("error getting service account '%s' in namespace %s: %s", argServiceAccount, namespace.GetName(), err)
+		log.Errorf("error getting service account '%s' in namespace %s: %s", *argServiceAccount, namespace.GetName(), err)
 		return fmt.Errorf("could not get ServiceAccounts: %v", err)
 	}
 
@@ -425,7 +513,12 @@ func (c *controller) processNamespace(namespace *corev1.Namespace, secret *corev
 
 func (c *controller) generateSecrets() []*corev1.Secret {
 	var secrets []*corev1.Secret
-	secretGenerators := getSecretGenerators(c)
+	secretGenerators := getSecretGenerators()
+
+	if len(secretGenerators) == 0 {
+		logrus.Warn("No registry credentials configured - no secrets will be generated")
+		return secrets
+	}
 
 	maxTries := RetryCfg.NumberOfRetries + 1
 	for _, secretGenerator := range secretGenerators {
@@ -458,11 +551,13 @@ func (c *controller) generateSecrets() []*corev1.Secret {
 			}
 		}
 
-		newSecret, err := generateSecretObj(newTokens, secretGenerator.IsJSONCfg, secretGenerator.SecretName)
-		if err != nil {
-			logrus.Errorf("Error generating secret for provider %s. Skipping secret provider until the next refresh cycle! [Err: %s]", secretGenerator.SecretName, err)
-		} else {
-			secrets = append(secrets, newSecret)
+		if len(newTokens) > 0 {
+			newSecret, err := generateSecretObj(newTokens, secretGenerator.IsJSONCfg, secretGenerator.SecretName)
+			if err != nil {
+				logrus.Errorf("Error generating secret for provider %s. Skipping secret provider until the next refresh cycle! [Err: %s]", secretGenerator.SecretName, err)
+			} else {
+				secrets = append(secrets, newSecret)
+			}
 		}
 	}
 	return secrets
@@ -619,12 +714,34 @@ func validateParams() {
 	}
 }
 
+// shouldSkipNamespace checks if a namespace should be skipped based on configuration
+func shouldSkipNamespace(namespaceName string) bool {
+	// Check if kube-system should be skipped
+	if *argSkipKubeSystem && namespaceName == "kube-system" {
+		return true
+	}
+
+	// Check if namespace is in the skip list
+	if *argSkipNamespaces != "" {
+		skipList := strings.Split(*argSkipNamespaces, ",")
+		for _, skipNs := range skipList {
+			skipNs = strings.TrimSpace(skipNs)
+			if skipNs == namespaceName {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 func handler(c *controller, ns *corev1.Namespace) error {
 	logrus.Infof("Refreshing credentials for namespace %s", ns.GetName())
 	secrets := c.generateSecrets()
 	logrus.Infof("Got %d refreshed credentials for namespace %s", len(secrets), ns.GetName())
 	for _, secret := range secrets {
-		if *argSkipKubeSystem && ns.GetName() == "kube-system" {
+		if shouldSkipNamespace(ns.GetName()) {
+			logrus.Debugf("Skipping namespace %s", ns.GetName())
 			continue
 		}
 
@@ -659,16 +776,11 @@ func main() {
 	logrus.Info("Token Generation Retry Delay (seconds): ", RetryCfg.RetryDelayInSeconds)
 
 	util, err := k8sutil.New(*argKubecfgFile, *argKubeMasterURL)
-
 	if err != nil {
-		logrus.Error("Could not create k8s client!!", err)
+		logrus.Fatal("Could not create k8s client!!", err)
 	}
 
-	ecrClient := newEcrClient()
-	gcrClient := newGcrClient()
-	dprClient := newDprClient()
-	acrClient := newACRClient()
-	c := &controller{util, ecrClient, gcrClient, dprClient, acrClient}
+	c := &controller{k8sutil: util}
 
 	util.WatchNamespaces(time.Duration(*argRefreshMinutes)*time.Minute, func(ns *corev1.Namespace) error {
 		return handler(c, ns)
