@@ -3,4 +3,4 @@ kind: Kustomization
 resources:
   - deployment.yaml
 images:
-  - name: drgrovellc/registry-creds
+  - name: ghcr.io/manifest-cyber/registry-creds
